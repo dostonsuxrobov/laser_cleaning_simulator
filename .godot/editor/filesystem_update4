@@ -1,0 +1,6 @@
+res://cleanable/dirt.gdshader
+res://cleanable/assets/cube.tscn
+res://main.tscn
+res://gun/laser_beam.gd
+res://gun/sprayer.gd
+res://gun/gun.tscn
