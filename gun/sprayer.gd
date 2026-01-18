@@ -13,14 +13,14 @@ func _ready() -> void:
 	_laser_beam = $LaserBeam
 
 
-func _physics_process(_delta: float) -> void:
+func _physics_process(delta: float) -> void:
 	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
-		_spray()
+		_spray(delta)
 	else:
 		_laser_beam.hide_beam()
 
 
-func _spray() -> void:
+func _spray(delta: float) -> void:
 	var space_state := get_world_3d().direct_space_state
 	
 	var ray_from := _camera.global_position
@@ -36,7 +36,9 @@ func _spray() -> void:
 	else:
 		beam_end = result.position
 		var hit_object: Node3D = result.collider as Node3D
+		var distance: float = ray_from.distance_to(result.position)
+		
 		if hit_object.has_method("clean_at"):
-			hit_object.clean_at(result.position, spray_radius, result.normal)
+			hit_object.clean_at(result.position, spray_radius, result.normal, distance, delta)
 	
 	_laser_beam.show_beam(global_position, beam_end)

@@ -5,3 +5,4 @@ res://gun/laser_beam.gd
 res://gun/sprayer.gd
 res://gun/gun.tscn
 res://cleanable/cube.tscn
+res://cleanable/cleanable_mesh.gd

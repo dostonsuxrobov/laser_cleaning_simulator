@@ -1,10 +1,13 @@
 extends StaticBody3D
 ## Cleanable mesh - finds UV from world hit position using mesh triangles.
-## Works with any UV-mapped mesh imported from Blender.
 
 @export var texture_size: int = 256
-@export var clean_strength: float = 0.6
 @export var clean_radius_uv: float = 0.05
+
+# Distance settings
+@export var optimal_distance: float = 2.0   # closest effective range
+@export var max_distance: float = 8.0       # beyond this, no cleaning
+@export var clean_rate: float = 1.5         # how fast it cleans per second at optimal distance
 
 var _dirt_image: Image
 var _dirt_texture: ImageTexture
@@ -21,7 +24,6 @@ func _ready() -> void:
 
 
 func _find_mesh_instance() -> MeshInstance3D:
-	# Find first MeshInstance3D child
 	for child in get_children():
 		if child is MeshInstance3D:
 			return child
@@ -29,7 +31,6 @@ func _find_mesh_instance() -> MeshInstance3D:
 
 
 func _setup_mesh_data() -> void:
-	# Load mesh data for UV lookups
 	_mesh_data = MeshDataTool.new()
 	var mesh: Mesh = _mesh_instance.mesh
 	if mesh:
@@ -37,7 +38,6 @@ func _setup_mesh_data() -> void:
 		if mesh is ArrayMesh:
 			array_mesh = mesh
 		else:
-			# Convert to ArrayMesh if needed (e.g., from imported mesh)
 			array_mesh = ArrayMesh.new()
 			array_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, mesh.get_mesh_arrays())
 		_mesh_data.create_from_surface(array_mesh, 0)
@@ -48,27 +48,43 @@ func _setup_dirt_texture() -> void:
 	_dirt_image.fill(Color.WHITE)
 	_dirt_texture = ImageTexture.create_from_image(_dirt_image)
 	
-	# Get or create material
 	_material = _mesh_instance.get_surface_override_material(0) as ShaderMaterial
 	if _material:
 		_material.set_shader_parameter("dirt_mask", _dirt_texture)
 
 
-func clean_at(world_pos: Vector3, radius: float, _normal: Vector3) -> void:
+func clean_at(world_pos: Vector3, radius: float, _normal: Vector3, distance: float, delta: float) -> void:
+	# Calculate effectiveness based on distance
+	var effectiveness := _calculate_effectiveness(distance)
+	if effectiveness <= 0.0:
+		return
+	
 	var local_pos: Vector3 = _mesh_instance.to_local(world_pos)
 	var uv: Vector2 = _find_uv_at_position(local_pos)
 	
 	if uv.x < 0:
 		return
 	
-	# Convert UV to pixel coordinates
 	var pixel_x: int = int(uv.x * texture_size) % texture_size
 	var pixel_y: int = int(uv.y * texture_size) % texture_size
 	var pixel_radius: int = int(clean_radius_uv * texture_size)
 	pixel_radius = max(pixel_radius, 3)
 	
-	_paint_circle(pixel_x, pixel_y, pixel_radius)
+	var strength: float = clean_rate * effectiveness * delta
+	_paint_circle(pixel_x, pixel_y, pixel_radius, strength)
 	_dirt_texture.update(_dirt_image)
+
+
+func _calculate_effectiveness(distance: float) -> float:
+	if distance > max_distance:
+		return 0.0
+	if distance <= optimal_distance:
+		return 1.0
+	
+	# Linear falloff from optimal to max
+	var falloff_range: float = max_distance - optimal_distance
+	var distance_past_optimal: float = distance - optimal_distance
+	return 1.0 - (distance_past_optimal / falloff_range)
 
 
 func _find_uv_at_position(local_pos: Vector3) -> Vector2:
@@ -78,7 +94,6 @@ func _find_uv_at_position(local_pos: Vector3) -> Vector2:
 	var closest_uv: Vector2 = Vector2(-1, -1)
 	var closest_dist: float = INF
 	
-	# Search all triangles for closest hit
 	var face_count: int = _mesh_data.get_face_count()
 	
 	for face_idx in face_count:
@@ -90,17 +105,14 @@ func _find_uv_at_position(local_pos: Vector3) -> Vector2:
 		var v1: Vector3 = _mesh_data.get_vertex(v1_idx)
 		var v2: Vector3 = _mesh_data.get_vertex(v2_idx)
 		
-		# Get closest point on triangle
 		var closest_on_tri: Vector3 = _closest_point_on_triangle(local_pos, v0, v1, v2)
 		var dist: float = local_pos.distance_to(closest_on_tri)
 		
 		if dist < closest_dist:
 			closest_dist = dist
 			
-			# Compute barycentric coordinates
 			var bary: Vector3 = _barycentric(closest_on_tri, v0, v1, v2)
 			
-			# Interpolate UV
 			var uv0: Vector2 = _mesh_data.get_vertex_uv(v0_idx)
 			var uv1: Vector2 = _mesh_data.get_vertex_uv(v1_idx)
 			var uv2: Vector2 = _mesh_data.get_vertex_uv(v2_idx)
@@ -111,7 +123,6 @@ func _find_uv_at_position(local_pos: Vector3) -> Vector2:
 
 
 func _closest_point_on_triangle(p: Vector3, a: Vector3, b: Vector3, c: Vector3) -> Vector3:
-	# Project point onto triangle plane and clamp to triangle
 	var ab: Vector3 = b - a
 	var ac: Vector3 = c - a
 	var ap: Vector3 = p - a
@@ -176,7 +187,7 @@ func _barycentric(p: Vector3, a: Vector3, b: Vector3, c: Vector3) -> Vector3:
 	return Vector3(u, v, w)
 
 
-func _paint_circle(cx: int, cy: int, radius: int) -> void:
+func _paint_circle(cx: int, cy: int, radius: int, strength: float) -> void:
 	for y in range(cy - radius, cy + radius + 1):
 		for x in range(cx - radius, cx + radius + 1):
 			var px: int = x % texture_size
@@ -190,5 +201,5 @@ func _paint_circle(cx: int, cy: int, radius: int) -> void:
 			if dist <= radius:
 				var current: float = _dirt_image.get_pixel(px, py).r
 				var falloff: float = 1.0 - (dist / radius)
-				var new_val: float = max(0.0, current - clean_strength * falloff)
+				var new_val: float = max(0.0, current - strength * falloff)
 				_dirt_image.set_pixel(px, py, Color(new_val, 0, 0))
