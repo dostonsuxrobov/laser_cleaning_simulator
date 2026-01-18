@@ -2,7 +2,7 @@
 
 [ext_resource type="PackedScene" path="res://player/player.tscn" id="1_player"]
 [ext_resource type="PackedScene" path="res://world/floor.tscn" id="2_floor"]
-[ext_resource type="PackedScene" uid="uid://doe1jgnvid26h" path="res://cleanable/cube.tscn" id="4_1bvp3"]
+[ext_resource type="PackedScene" uid="uid://cuvw7wo5poaul" path="res://cleanable/cube.tscn" id="4_1bvp3"]
 [ext_resource type="PackedScene" path="res://ui/crosshair.tscn" id="4_crosshair"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
@@ -40,4 +40,4 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
 [node name="Crosshair" parent="." instance=ExtResource("4_crosshair")]
 
 [node name="cube" parent="." instance=ExtResource("4_1bvp3")]
-transform = Transform3D(0.85821724, -0.51328665, 0, 0.39282006, 0.65679663, 0.6436696, -0.33038703, -0.55240834, 0.7653035, 5.831846, 1.9160042, 0)
+transform = Transform3D(0.8254683, -0.3770744, 0.42002022, 0.5644485, 0.5514462, -0.6142516, 0, 0.744125, 0.6680404, 0, 2.011767, -6.589459)
