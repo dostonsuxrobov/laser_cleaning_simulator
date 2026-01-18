@@ -1,13 +1,15 @@
 extends StaticBody3D
-## Cleanable mesh - finds UV from world hit position using mesh triangles.
+## Cleanable mesh - two-layer rust removal with scan line pattern.
 
 @export var texture_size: int = 256
-@export var clean_radius_uv: float = 0.05
 
-# Distance settings
-@export var optimal_distance: float = 2.0   # closest effective range
-@export var max_distance: float = 8.0       # beyond this, no cleaning
-@export var clean_rate: float = 1.5         # how fast it cleans per second at optimal distance
+# Scan line shape (thin and wide, like real laser)
+@export var scan_width: int = 24    # wide sweep
+@export var scan_height: int = 2    # thin line
+
+# Much slower rates - requires dwelling
+@export var rust_clean_rate: float = 0.8
+@export var metal_clean_rate: float = 0.5
 
 var _dirt_image: Image
 var _dirt_texture: ImageTexture
@@ -44,8 +46,8 @@ func _setup_mesh_data() -> void:
 
 
 func _setup_dirt_texture() -> void:
-	_dirt_image = Image.create(texture_size, texture_size, false, Image.FORMAT_R8)
-	_dirt_image.fill(Color.WHITE)
+	_dirt_image = Image.create(texture_size, texture_size, false, Image.FORMAT_RG8)
+	_dirt_image.fill(Color(1.0, 1.0, 0.0))
 	_dirt_texture = ImageTexture.create_from_image(_dirt_image)
 	
 	_material = _mesh_instance.get_surface_override_material(0) as ShaderMaterial
@@ -53,11 +55,12 @@ func _setup_dirt_texture() -> void:
 		_material.set_shader_parameter("dirt_mask", _dirt_texture)
 
 
-func clean_at(world_pos: Vector3, radius: float, _normal: Vector3, distance: float, delta: float) -> void:
-	# Calculate effectiveness based on distance
-	var effectiveness := _calculate_effectiveness(distance)
-	if effectiveness <= 0.0:
+func clean_at(world_pos: Vector3, _radius: float, _normal: Vector3, distance: float, delta: float) -> void:
+	if distance > 8.0:
 		return
+	
+	# Closer = more effective (but not by much)
+	var distance_factor: float = clamp(1.0 - (distance - 1.0) / 7.0, 0.3, 1.0)
 	
 	var local_pos: Vector3 = _mesh_instance.to_local(world_pos)
 	var uv: Vector2 = _find_uv_at_position(local_pos)
@@ -67,24 +70,42 @@ func clean_at(world_pos: Vector3, radius: float, _normal: Vector3, distance: flo
 	
 	var pixel_x: int = int(uv.x * texture_size) % texture_size
 	var pixel_y: int = int(uv.y * texture_size) % texture_size
-	var pixel_radius: int = int(clean_radius_uv * texture_size)
-	pixel_radius = max(pixel_radius, 3)
 	
-	var strength: float = clean_rate * effectiveness * delta
-	_paint_circle(pixel_x, pixel_y, pixel_radius, strength)
+	var strength: float = delta * distance_factor
+	_clean_scanline(pixel_x, pixel_y, strength)
 	_dirt_texture.update(_dirt_image)
 
 
-func _calculate_effectiveness(distance: float) -> float:
-	if distance > max_distance:
-		return 0.0
-	if distance <= optimal_distance:
-		return 1.0
+func _clean_scanline(cx: int, cy: int, strength: float) -> void:
+	var half_w: int = scan_width / 2
+	var half_h: int = scan_height / 2
 	
-	# Linear falloff from optimal to max
-	var falloff_range: float = max_distance - optimal_distance
-	var distance_past_optimal: float = distance - optimal_distance
-	return 1.0 - (distance_past_optimal / falloff_range)
+	for y in range(cy - half_h, cy + half_h + 1):
+		for x in range(cx - half_w, cx + half_w + 1):
+			var px: int = posmod(x, texture_size)
+			var py: int = posmod(y, texture_size)
+			
+			# Falloff from center (stronger in middle of line)
+			var dx: float = abs(x - cx) / float(half_w) if half_w > 0 else 0.0
+			var falloff: float = 1.0 - dx * dx  # quadratic falloff
+			
+			_clean_pixel(px, py, strength * falloff)
+
+
+func _clean_pixel(px: int, py: int, strength: float) -> void:
+	var current: Color = _dirt_image.get_pixel(px, py)
+	
+	var rust: float = current.r
+	var grey: float = current.g
+	
+	if rust > 0.01:
+		# Layer 1: Peel rust (must clear this first)
+		rust = max(0.0, rust - strength * rust_clean_rate)
+		_dirt_image.set_pixel(px, py, Color(rust, grey, 0.0))
+	elif grey > 0.01:
+		# Layer 2: Polish to chrome (only when rust fully gone)
+		grey = max(0.0, grey - strength * metal_clean_rate)
+		_dirt_image.set_pixel(px, py, Color(0.0, grey, 0.0))
 
 
 func _find_uv_at_position(local_pos: Vector3) -> Vector2:
@@ -110,13 +131,10 @@ func _find_uv_at_position(local_pos: Vector3) -> Vector2:
 		
 		if dist < closest_dist:
 			closest_dist = dist
-			
 			var bary: Vector3 = _barycentric(closest_on_tri, v0, v1, v2)
-			
 			var uv0: Vector2 = _mesh_data.get_vertex_uv(v0_idx)
 			var uv1: Vector2 = _mesh_data.get_vertex_uv(v1_idx)
 			var uv2: Vector2 = _mesh_data.get_vertex_uv(v2_idx)
-			
 			closest_uv = uv0 * bary.x + uv1 * bary.y + uv2 * bary.z
 	
 	return closest_uv
@@ -185,21 +203,3 @@ func _barycentric(p: Vector3, a: Vector3, b: Vector3, c: Vector3) -> Vector3:
 	var u: float = 1.0 - v - w
 	
 	return Vector3(u, v, w)
-
-
-func _paint_circle(cx: int, cy: int, radius: int, strength: float) -> void:
-	for y in range(cy - radius, cy + radius + 1):
-		for x in range(cx - radius, cx + radius + 1):
-			var px: int = x % texture_size
-			var py: int = y % texture_size
-			if px < 0:
-				px += texture_size
-			if py < 0:
-				py += texture_size
-			
-			var dist: float = sqrt(pow(x - cx, 2) + pow(y - cy, 2))
-			if dist <= radius:
-				var current: float = _dirt_image.get_pixel(px, py).r
-				var falloff: float = 1.0 - (dist / radius)
-				var new_val: float = max(0.0, current - strength * falloff)
-				_dirt_image.set_pixel(px, py, Color(new_val, 0, 0))
