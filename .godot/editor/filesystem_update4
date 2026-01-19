@@ -7,3 +7,4 @@ res://gun/sprayer.gd
 res://gun/gun.tscn
 res://gun/laser_beam.gd
 res://gun/heat_distortion.gdshader
+res://cleanable/suzani.tscn
