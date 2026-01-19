@@ -48,11 +48,11 @@ shadow_mesh = SubResource("ArrayMesh_jrbm1")
 render_priority = 0
 shader = ExtResource("2_2btun")
 shader_parameter/rust_albedo = ExtResource("5_u8j60")
-shader_parameter/rust_roughness = 0.9
+shader_parameter/rust_roughness = 1.0
 shader_parameter/metal_albedo = ExtResource("1_vwi13")
 shader_parameter/metal_roughness = 0.5
 shader_parameter/chrome_albedo = ExtResource("4_eohj7")
-shader_parameter/chrome_roughness = 0.1
+shader_parameter/chrome_roughness = 0.0
 shader_parameter/chrome_metallic = 1.0
 
 [sub_resource type="BoxShape3D" id="BoxShape3D_awlq2"]
@@ -60,8 +60,6 @@ size = Vector3(2.009552, 2.039795, 2.0148315)
 
 [node name="cube" type="StaticBody3D"]
 script = ExtResource("1_pwq16")
-rust_clean_rate = 1.5
-metal_clean_rate = 1.5
 
 [node name="Cube" type="MeshInstance3D" parent="."]
 mesh = SubResource("ArrayMesh_j8bck")

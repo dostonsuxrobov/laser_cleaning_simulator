@@ -1,15 +1,15 @@
 extends StaticBody3D
-## Cleanable mesh - two-layer rust removal with scan line pattern.
+## Cleanable mesh - two-layer rust removal with square contact.
 
+@export_group("Texture")
 @export var texture_size: int = 256
 
-# Scan line shape (thin and wide, like real laser)
-@export var scan_width: int = 24    # wide sweep
-@export var scan_height: int = 2    # thin line
+@export_group("Scan Shape")
+@export var scan_size: int = 8  # Square: same width and height
 
-# Much slower rates - requires dwelling
-@export var rust_clean_rate: float = 0.8
-@export var metal_clean_rate: float = 0.5
+@export_group("Layer Resistance")
+@export_range(0.1, 5.0, 0.1) var rust_resistance: float = 1.0
+@export_range(0.1, 5.0, 0.1) var metal_resistance: float = 1.5
 
 var _dirt_image: Image
 var _dirt_texture: ImageTexture
@@ -55,12 +55,9 @@ func _setup_dirt_texture() -> void:
 		_material.set_shader_parameter("dirt_mask", _dirt_texture)
 
 
-func clean_at(world_pos: Vector3, _radius: float, _normal: Vector3, distance: float, delta: float) -> void:
-	if distance > 8.0:
+func clean_at(world_pos: Vector3, _normal: Vector3, intensity: float, effectiveness: float, delta: float) -> void:
+	if effectiveness <= 0.0:
 		return
-	
-	# Closer = more effective (but not by much)
-	var distance_factor: float = clamp(1.0 - (distance - 1.0) / 7.0, 0.3, 1.0)
 	
 	var local_pos: Vector3 = _mesh_instance.to_local(world_pos)
 	var uv: Vector2 = _find_uv_at_position(local_pos)
@@ -71,25 +68,20 @@ func clean_at(world_pos: Vector3, _radius: float, _normal: Vector3, distance: fl
 	var pixel_x: int = int(uv.x * texture_size) % texture_size
 	var pixel_y: int = int(uv.y * texture_size) % texture_size
 	
-	var strength: float = delta * distance_factor
-	_clean_scanline(pixel_x, pixel_y, strength)
+	var strength: float = intensity * effectiveness * delta
+	_clean_square(pixel_x, pixel_y, strength)
 	_dirt_texture.update(_dirt_image)
 
 
-func _clean_scanline(cx: int, cy: int, strength: float) -> void:
-	var half_w: int = scan_width / 2
-	var half_h: int = scan_height / 2
+func _clean_square(cx: int, cy: int, strength: float) -> void:
+	var half: int = scan_size / 2
 	
-	for y in range(cy - half_h, cy + half_h + 1):
-		for x in range(cx - half_w, cx + half_w + 1):
+	for y in range(cy - half, cy + half + 1):
+		for x in range(cx - half, cx + half + 1):
 			var px: int = posmod(x, texture_size)
 			var py: int = posmod(y, texture_size)
 			
-			# Falloff from center (stronger in middle of line)
-			var dx: float = abs(x - cx) / float(half_w) if half_w > 0 else 0.0
-			var falloff: float = 1.0 - dx * dx  # quadratic falloff
-			
-			_clean_pixel(px, py, strength * falloff)
+			_clean_pixel(px, py, strength)
 
 
 func _clean_pixel(px: int, py: int, strength: float) -> void:
@@ -99,12 +91,12 @@ func _clean_pixel(px: int, py: int, strength: float) -> void:
 	var grey: float = current.g
 	
 	if rust > 0.01:
-		# Layer 1: Peel rust (must clear this first)
-		rust = max(0.0, rust - strength * rust_clean_rate)
+		var clean_amount: float = strength / rust_resistance
+		rust = max(0.0, rust - clean_amount)
 		_dirt_image.set_pixel(px, py, Color(rust, grey, 0.0))
 	elif grey > 0.01:
-		# Layer 2: Polish to chrome (only when rust fully gone)
-		grey = max(0.0, grey - strength * metal_clean_rate)
+		var clean_amount: float = strength / metal_resistance
+		grey = max(0.0, grey - clean_amount)
 		_dirt_image.set_pixel(px, py, Color(0.0, grey, 0.0))
 
 

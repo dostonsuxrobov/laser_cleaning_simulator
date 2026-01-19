@@ -1,8 +1,9 @@
-[gd_scene load_steps=6 format=3 uid="uid://xgu2kdf4vtnv"]
+[gd_scene load_steps=7 format=3 uid="uid://xgu2kdf4vtnv"]
 
 [ext_resource type="Script" uid="uid://bxlnuskpgbtqg" path="res://gun/gun.gd" id="1_script"]
 [ext_resource type="Script" uid="uid://c5odiijnanufv" path="res://gun/sprayer.gd" id="2_sprayer"]
 [ext_resource type="Script" uid="uid://drmfhngiqq285" path="res://gun/laser_beam.gd" id="3_qhldj"]
+[ext_resource type="Script" uid="uid://5o7ufvy360xk" path="res://gun/laser_impact.gd" id="4_fvq5x"]
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_1"]
 albedo_color = Color(0.15, 0.15, 0.18, 1)
@@ -20,6 +21,13 @@ mesh = SubResource("BoxMesh_body")
 
 [node name="Sprayer" type="Node3D" parent="."]
 script = ExtResource("2_sprayer")
+laser_intensity = 3.5
 
 [node name="LaserBeam" type="Node3D" parent="Sprayer"]
 script = ExtResource("3_qhldj")
+distortion_strength = 0.1
+visibility = 0.5
+wave_speed = 60.0
+
+[node name="LaserImpact" type="Node3D" parent="Sprayer"]
+script = ExtResource("4_fvq5x")
