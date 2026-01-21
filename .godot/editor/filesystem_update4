@@ -1,10 +1,6 @@
-res://main.tscn
+res://cleanable/suzani.tscn
 res://cleanable/dirt.gdshader
+res://gun/heat_distortion.gdshader
 res://cleanable/cleanable_mesh.gd
 res://cleanable/cube.tscn
-res://gun/laser_impact.gd
-res://gun/sprayer.gd
-res://gun/gun.tscn
-res://gun/laser_beam.gd
-res://gun/heat_distortion.gdshader
-res://cleanable/suzani.tscn
+res://cleanable/zone_flash.gd
