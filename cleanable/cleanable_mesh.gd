@@ -37,6 +37,8 @@ func _ready() -> void:
 		_setup_mesh_data()
 		_setup_textures()
 		_setup_zones()
+	
+	DirtVision.dirt_vision_changed.connect(_on_dirt_vision_changed)
 
 
 func _process(delta: float) -> void:
@@ -56,6 +58,11 @@ func _process(delta: float) -> void:
 	
 	for zone_key in zones_to_remove:
 		_flashing_zones.erase(zone_key)
+
+
+func _on_dirt_vision_changed(enabled: bool) -> void:
+	if _material:
+		_material.set_shader_parameter("dirt_vision_enabled", enabled)
 
 
 func _find_mesh_instance() -> MeshInstance3D:

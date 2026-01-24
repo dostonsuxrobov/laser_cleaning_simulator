@@ -1,6 +1,3 @@
 res://cleanable/cube.tscn
 res://cleanable/dirt.gdshader
 res://gun/heat_distortion.gdshader
-res://gun/sprayer.gd
-res://cleanable/cleanable_mesh.gd
-res://gun/laser_impact.gd
