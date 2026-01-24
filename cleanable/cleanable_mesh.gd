@@ -8,9 +8,6 @@ signal object_completed
 @export var texture_size: int = 256
 @export var zone_map: Texture2D
 
-@export_group("Brush")
-@export var brush_size: int = 8
-
 @export_group("Cleaning Speed")
 @export_range(0.1, 5.0, 0.1) var laser_power: float = 1.0
 @export_range(0.1, 5.0, 0.1) var rust_resistance: float = 1.0
@@ -18,24 +15,47 @@ signal object_completed
 
 @export_group("Completion")
 @export_range(0.5, 1.0, 0.05) var auto_complete_threshold: float = 0.85
+@export var flash_fade_speed: float = 2.0
 
 var _dirt_image: Image
 var _dirt_texture: ImageTexture
+var _flash_image: Image
+var _flash_texture: ImageTexture
 var _zone_image: Image
 var _material: ShaderMaterial
 var _mesh_instance: MeshInstance3D
 var _mesh_data: MeshDataTool
 
 var _zones: Dictionary = {}
-var _completed_pixels: Dictionary = {}  # Track pixels already counted
+var _completed_pixels: Dictionary = {}
+var _flashing_zones: Dictionary = {}
 
 
 func _ready() -> void:
 	_mesh_instance = _find_mesh_instance()
 	if _mesh_instance:
 		_setup_mesh_data()
-		_setup_dirt_texture()
+		_setup_textures()
 		_setup_zones()
+
+
+func _process(delta: float) -> void:
+	if _flashing_zones.is_empty():
+		return
+	
+	var zones_to_remove: Array = []
+	
+	for zone_key in _flashing_zones:
+		_flashing_zones[zone_key] -= delta * flash_fade_speed
+		
+		if _flashing_zones[zone_key] <= 0.0:
+			_flashing_zones[zone_key] = 0.0
+			zones_to_remove.append(zone_key)
+	
+	_update_flash_texture()
+	
+	for zone_key in zones_to_remove:
+		_flashing_zones.erase(zone_key)
 
 
 func _find_mesh_instance() -> MeshInstance3D:
@@ -58,14 +78,34 @@ func _setup_mesh_data() -> void:
 		_mesh_data.create_from_surface(array_mesh, 0)
 
 
-func _setup_dirt_texture() -> void:
+func _setup_textures() -> void:
 	_dirt_image = Image.create(texture_size, texture_size, false, Image.FORMAT_RG8)
 	_dirt_image.fill(Color(1.0, 1.0, 0.0))
 	_dirt_texture = ImageTexture.create_from_image(_dirt_image)
 	
+	_flash_image = Image.create(texture_size, texture_size, false, Image.FORMAT_R8)
+	_flash_image.fill(Color(0.0, 0.0, 0.0))
+	_flash_texture = ImageTexture.create_from_image(_flash_image)
+	
 	_material = _mesh_instance.get_surface_override_material(0) as ShaderMaterial
 	if _material:
 		_material.set_shader_parameter("dirt_mask", _dirt_texture)
+		_material.set_shader_parameter("flash_mask", _flash_texture)
+
+
+func _update_flash_texture() -> void:
+	_flash_image.fill(Color(0.0, 0.0, 0.0))
+	
+	for zone_key in _flashing_zones:
+		var intensity: float = _flashing_zones[zone_key]
+		if intensity <= 0.0:
+			continue
+		
+		var zone = _zones[zone_key]
+		for pixel in zone["pixels"]:
+			_flash_image.set_pixel(pixel.x, pixel.y, Color(intensity, 0.0, 0.0))
+	
+	_flash_texture.update(_flash_image)
 
 
 func _setup_zones() -> void:
@@ -113,14 +153,13 @@ func _setup_zones() -> void:
 
 
 func _color_to_key(color: Color) -> String:
-	# Snap to 0 or 1 per channel (max 8 zones)
 	var r: int = 1 if color.r > 0.5 else 0
 	var g: int = 1 if color.g > 0.5 else 0
 	var b: int = 1 if color.b > 0.5 else 0
 	return "%d,%d,%d" % [r, g, b]
 
 
-func clean_at(world_pos: Vector3, _normal: Vector3, intensity: float, effectiveness: float, delta: float) -> void:
+func clean_at(world_pos: Vector3, _normal: Vector3, intensity: float, effectiveness: float, delta: float, brush_size: int = 8, pressure: float = 1.0) -> void:
 	if effectiveness <= 0.0:
 		return
 	
@@ -133,12 +172,12 @@ func clean_at(world_pos: Vector3, _normal: Vector3, intensity: float, effectiven
 	var pixel_x: int = int(uv.x * texture_size) % texture_size
 	var pixel_y: int = int(uv.y * texture_size) % texture_size
 	
-	var strength: float = laser_power * intensity * effectiveness * delta
-	_paint_square(pixel_x, pixel_y, strength)
+	var strength: float = laser_power * intensity * effectiveness * pressure * delta
+	_paint_square(pixel_x, pixel_y, strength, brush_size)
 	_dirt_texture.update(_dirt_image)
 
 
-func _paint_square(cx: int, cy: int, strength: float) -> void:
+func _paint_square(cx: int, cy: int, strength: float, brush_size: int) -> void:
 	var half: int = brush_size / 2
 	
 	for y in range(cy - half, cy + half + 1):
@@ -149,9 +188,8 @@ func _paint_square(cx: int, cy: int, strength: float) -> void:
 
 
 func _clean_pixel(px: int, py: int, strength: float) -> void:
-	var pixel_key := px + py * texture_size
+	var pixel_key: int = px + py * texture_size
 	
-	# Skip if already completed
 	if _completed_pixels.has(pixel_key):
 		return
 	
@@ -168,7 +206,6 @@ func _clean_pixel(px: int, py: int, strength: float) -> void:
 		grey = max(0.0, grey - amount)
 		_dirt_image.set_pixel(px, py, Color(0.0, grey, 0.0))
 	
-	# Check if pixel just became chrome
 	var is_chrome: bool = rust <= 0.01 and grey <= 0.01
 	if is_chrome:
 		_completed_pixels[pixel_key] = true
@@ -210,7 +247,6 @@ func _complete_zone(zone_key: String) -> void:
 	
 	zone["completed"] = true
 	
-	# Mark all pixels as completed and clean them
 	for pixel in zone["pixels"]:
 		var pixel_key: int = pixel.x + pixel.y * texture_size
 		_completed_pixels[pixel_key] = true
@@ -218,24 +254,12 @@ func _complete_zone(zone_key: String) -> void:
 	
 	_dirt_texture.update(_dirt_image)
 	
-	var world_pos := global_position
-	
-	emit_signal("zone_completed", zone["color"], world_pos)
+	emit_signal("zone_completed", zone["color"], global_position)
 	print("Zone completed: ", zone_key)
 	
 	_check_object_completed()
 	
-	# Flash effect
-	var flash_light := OmniLight3D.new()
-	flash_light.light_color = Color(1.0, 1.0, 1.0)
-	flash_light.light_energy = 8.0
-	flash_light.omni_range = 3.0
-	add_child(flash_light)
-	flash_light.global_position = world_pos
-	
-	var tween := create_tween()
-	tween.tween_property(flash_light, "light_energy", 0.0, 0.4)
-	tween.tween_callback(flash_light.queue_free)
+	_flashing_zones[zone_key] = 1.0
 
 
 func _check_object_completed() -> void:

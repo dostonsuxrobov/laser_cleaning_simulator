@@ -63,7 +63,6 @@ size = Vector3(2.009552, 2.039795, 2.0148315)
 [node name="cube" type="StaticBody3D"]
 script = ExtResource("1_pwq16")
 zone_map = ExtResource("2_u8j60")
-brush_size = 32
 
 [node name="Cube" type="MeshInstance3D" parent="."]
 mesh = SubResource("ArrayMesh_j8bck")

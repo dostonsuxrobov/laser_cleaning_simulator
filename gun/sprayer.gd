@@ -5,6 +5,11 @@ extends Node3D
 @export var spray_range: float = 10.0
 @export_range(0.1, 5.0, 0.1) var laser_intensity: float = 1.0
 
+@export_group("Brush Size")
+@export var min_brush_size: int = 4
+@export var max_brush_size: int = 16
+@export var brush_scroll_step: int = 2
+
 @export_group("Distance Falloff")
 @export var optimal_distance: float = 2.0
 @export var max_distance: float = 8.0
@@ -12,6 +17,8 @@ extends Node3D
 var _camera: Camera3D
 var _laser_beam: Node3D
 var _laser_impact: Node3D
+var _laser_active: bool = false
+var _current_brush_size: int = 8
 
 
 func _ready() -> void:
@@ -20,8 +27,28 @@ func _ready() -> void:
 	_laser_impact = $LaserImpact
 
 
+func _input(event: InputEvent) -> void:
+	if event is InputEventMouseButton:
+		if event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
+			_laser_active = not _laser_active
+			
+			if not _laser_active:
+				_laser_beam.hide_beam()
+				_laser_impact.hide_impact()
+		
+		elif event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
+			_current_brush_size = min(_current_brush_size + brush_scroll_step, max_brush_size)
+			print("Brush size: ", _current_brush_size, " | Pressure: ", _get_pressure_multiplier())
+		
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
+			_current_brush_size = max(_current_brush_size - brush_scroll_step, min_brush_size)
+			print("Brush size: ", _current_brush_size, " | Pressure: ", _get_pressure_multiplier())
+
+
 func _physics_process(delta: float) -> void:
 	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+		_spray(delta)
+	elif _laser_active:
 		_spray(delta)
 	else:
 		_laser_beam.hide_beam()
@@ -48,11 +75,12 @@ func _spray(delta: float) -> void:
 		var hit_object: Node3D = result.collider as Node3D
 		var distance: float = ray_from.distance_to(result.position)
 		
-		_laser_impact.show_impact(beam_end, hit_normal)
+		_laser_impact.show_impact(beam_end, hit_normal, _current_brush_size)
 		
 		if hit_object.has_method("clean_at"):
 			var effectiveness := _calculate_effectiveness(distance)
-			hit_object.clean_at(result.position, hit_normal, laser_intensity, effectiveness, delta)
+			var pressure := _get_pressure_multiplier()
+			hit_object.clean_at(result.position, hit_normal, laser_intensity, effectiveness, delta, _current_brush_size, pressure)
 	
 	_laser_beam.show_beam(global_position, beam_end)
 
@@ -66,3 +94,9 @@ func _calculate_effectiveness(distance: float) -> float:
 	var falloff_range: float = max_distance - optimal_distance
 	var distance_past_optimal: float = distance - optimal_distance
 	return 1.0 - (distance_past_optimal / falloff_range)
+
+
+func _get_pressure_multiplier() -> float:
+	var size_range: float = max_brush_size - min_brush_size
+	var normalized: float = (_current_brush_size - min_brush_size) / size_range
+	return lerp(2.0, 0.5, normalized)
