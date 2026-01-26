@@ -1,3 +1,4 @@
 res://cleanable/cube.tscn
 res://cleanable/dirt.gdshader
 res://gun/heat_distortion.gdshader
+res://cleanable/cleanable_mesh.gd

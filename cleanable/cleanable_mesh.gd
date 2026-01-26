@@ -14,7 +14,7 @@ signal object_completed
 @export_range(0.1, 5.0, 0.1) var metal_resistance: float = 1.5
 
 @export_group("Completion")
-@export_range(0.5, 1.0, 0.05) var auto_complete_threshold: float = 0.85
+@export_range(0.5, 1.0, 0.05) var auto_complete_threshold: float = 0.95
 @export var flash_fade_speed: float = 2.0
 
 var _dirt_image: Image
@@ -38,7 +38,9 @@ func _ready() -> void:
 		_setup_textures()
 		_setup_zones()
 	
-	DirtVision.dirt_vision_changed.connect(_on_dirt_vision_changed)
+	if has_node("/root/DirtVision"):
+		var dirt_vision = get_node("/root/DirtVision")
+		dirt_vision.dirt_vision_changed.connect(_on_dirt_vision_changed)
 
 
 func _process(delta: float) -> void:
@@ -261,6 +263,9 @@ func _complete_zone(zone_key: String) -> void:
 	
 	_dirt_texture.update(_dirt_image)
 	
+	# Play completion sound
+	AudioManager.play_ding()
+	
 	emit_signal("zone_completed", zone["color"], global_position)
 	print("Zone completed: ", zone_key)
 	
@@ -355,3 +360,34 @@ func _barycentric(p: Vector3, a: Vector3, b: Vector3, c: Vector3) -> Vector3:
 	var v := (d11 * d20 - d01 * d21) / denom
 	var w := (d00 * d21 - d01 * d20) / denom
 	return Vector3(1.0 - v - w, v, w)
+
+
+## Returns overall cleaning progress (0.0 to 1.0)
+func get_total_progress() -> float:
+	var total_pixels: int = 0
+	var cleaned_pixels: int = 0
+	
+	for zone_key in _zones:
+		var zone = _zones[zone_key]
+		total_pixels += zone["total"]
+		if zone["completed"]:
+			cleaned_pixels += zone["total"]
+		else:
+			cleaned_pixels += zone["cleaned"]
+	
+	if total_pixels == 0:
+		return 0.0
+	
+	return float(cleaned_pixels) / float(total_pixels)
+
+
+## Returns dictionary of zone states for UI
+func get_zones_state() -> Dictionary:
+	var state: Dictionary = {}
+	for zone_key in _zones:
+		var zone = _zones[zone_key]
+		state[zone_key] = {
+			"completed": zone["completed"],
+			"progress": float(zone["cleaned"]) / float(zone["total"]) if zone["total"] > 0 else 0.0
+		}
+	return state

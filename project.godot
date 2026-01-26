@@ -17,6 +17,7 @@ config/features=PackedStringArray("4.5", "Forward Plus")
 [autoload]
 
 DirtVision="*res://autoloads/dirt_vision.gd"
+AudioManager="*res://autoloads/audio_manager.gd"
 
 [input]
 
