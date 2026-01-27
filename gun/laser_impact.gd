@@ -35,7 +35,6 @@ func _setup_light() -> void:
 func _setup_indicator() -> void:
 	_indicator = MeshInstance3D.new()
 	
-	# Create square outline using ImmediateMesh
 	var mesh := ImmediateMesh.new()
 	_indicator.mesh = mesh
 	
@@ -72,11 +71,9 @@ func _draw_square_outline(size: float) -> void:
 
 
 func _add_quad(mesh: ImmediateMesh, a: Vector3, b: Vector3, c: Vector3, d: Vector3) -> void:
-	# Triangle 1
 	mesh.surface_add_vertex(a)
 	mesh.surface_add_vertex(b)
 	mesh.surface_add_vertex(c)
-	# Triangle 2
 	mesh.surface_add_vertex(a)
 	mesh.surface_add_vertex(c)
 	mesh.surface_add_vertex(d)
@@ -95,7 +92,6 @@ func _process(delta: float) -> void:
 func show_impact(hit_position: Vector3, normal: Vector3, brush_size: int = 8) -> void:
 	global_position = hit_position + normal * 0.005
 	
-	# Convert brush pixel size to world size (approximate)
 	var world_size: float = brush_size * 0.015
 	
 	if abs(world_size - _current_size) > 0.001:

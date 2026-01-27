@@ -55,7 +55,6 @@ func _apply_settings() -> void:
 
 
 func _process(_delta: float) -> void:
-	# Live update in editor and runtime
 	_apply_settings()
 
 

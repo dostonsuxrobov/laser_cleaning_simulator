@@ -2,3 +2,7 @@ res://cleanable/cube.tscn
 res://cleanable/dirt.gdshader
 res://gun/heat_distortion.gdshader
 res://cleanable/cleanable_mesh.gd
+res://autoloads/audio_manager.gd
+res://gun/sprayer.gd
+res://gun/laser_beam.gd
+res://gun/laser_impact.gd

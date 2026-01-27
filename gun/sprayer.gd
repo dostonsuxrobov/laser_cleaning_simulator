@@ -19,6 +19,7 @@ var _laser_beam: Node3D
 var _laser_impact: Node3D
 var _laser_active: bool = false
 var _current_brush_size: int = 8
+var _is_spraying: bool = false
 
 
 func _ready() -> void:
@@ -35,6 +36,7 @@ func _input(event: InputEvent) -> void:
 			if not _laser_active:
 				_laser_beam.hide_beam()
 				_laser_impact.hide_impact()
+				_stop_spray()
 		
 		elif event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
 			_current_brush_size = min(_current_brush_size + brush_scroll_step, max_brush_size)
@@ -53,9 +55,12 @@ func _physics_process(delta: float) -> void:
 	else:
 		_laser_beam.hide_beam()
 		_laser_impact.hide_impact()
+		_stop_spray()
 
 
 func _spray(delta: float) -> void:
+	_start_spray()
+	
 	var space_state := get_world_3d().direct_space_state
 	
 	var ray_from := _camera.global_position
@@ -83,6 +88,18 @@ func _spray(delta: float) -> void:
 			hit_object.clean_at(result.position, hit_normal, laser_intensity, effectiveness, delta, _current_brush_size, pressure)
 	
 	_laser_beam.show_beam(global_position, beam_end)
+
+
+func _start_spray() -> void:
+	if not _is_spraying:
+		_is_spraying = true
+		AudioManager.start_spray()
+
+
+func _stop_spray() -> void:
+	if _is_spraying:
+		_is_spraying = false
+		AudioManager.stop_spray()
 
 
 func _calculate_effectiveness(distance: float) -> float:
