@@ -8,6 +8,16 @@ signal object_completed
 @export var texture_size: int = 256
 @export var zone_map: Texture2D
 
+@export_group("Zone Names")
+@export var zone_names: Dictionary = {
+	"1,0,0": "Zone 1",
+	"0,1,0": "Zone 2",
+	"0,0,1": "Zone 3",
+	"1,1,0": "Zone 4",
+	"1,0,1": "Zone 5",
+	"0,1,1": "Zone 6"
+}
+
 @export_group("Cleaning Speed")
 @export_range(0.1, 5.0, 0.1) var laser_power: float = 1.0
 @export_range(0.1, 5.0, 0.1) var rust_resistance: float = 1.0
@@ -32,6 +42,8 @@ var _flashing_zones: Dictionary = {}
 
 
 func _ready() -> void:
+	add_to_group("cleanable")
+	
 	_mesh_instance = _find_mesh_instance()
 	if _mesh_instance:
 		_setup_mesh_data()
@@ -263,7 +275,6 @@ func _complete_zone(zone_key: String) -> void:
 	
 	_dirt_texture.update(_dirt_image)
 	
-	# Play completion sound
 	AudioManager.play_ding()
 	
 	emit_signal("zone_completed", zone["color"], global_position)
@@ -360,6 +371,44 @@ func _barycentric(p: Vector3, a: Vector3, b: Vector3, c: Vector3) -> Vector3:
 	var v := (d11 * d20 - d01 * d21) / denom
 	var w := (d00 * d21 - d01 * d20) / denom
 	return Vector3(1.0 - v - w, v, w)
+
+
+## Returns zone info at world position (for UI)
+func get_zone_at_position(world_pos: Vector3) -> Dictionary:
+	var local_pos: Vector3 = _mesh_instance.to_local(world_pos)
+	var uv: Vector2 = _find_uv_at_position(local_pos)
+	
+	if uv.x < 0:
+		return {}
+	
+	var pixel_x: int = int(uv.x * texture_size) % texture_size
+	var pixel_y: int = int(uv.y * texture_size) % texture_size
+	
+	if not _zone_image:
+		return {}
+	
+	var color := _zone_image.get_pixel(pixel_x, pixel_y)
+	
+	if color.r < 0.1 and color.g < 0.1 and color.b < 0.1:
+		return {}
+	
+	var zone_key := _color_to_key(color)
+	
+	if not _zones.has(zone_key):
+		return {}
+	
+	var zone = _zones[zone_key]
+	var progress: float = float(zone["cleaned"]) / float(zone["total"]) if zone["total"] > 0 else 0.0
+	
+	# Get name from object's zone_names, fallback to key
+	var display_name: String = zone_names.get(zone_key, zone_key)
+	
+	return {
+		"key": zone_key,
+		"name": display_name,
+		"progress": progress,
+		"completed": zone["completed"]
+	}
 
 
 ## Returns overall cleaning progress (0.0 to 1.0)
