@@ -21,7 +21,7 @@ mesh = SubResource("BoxMesh_body")
 
 [node name="Sprayer" type="Node3D" parent="."]
 script = ExtResource("2_sprayer")
-laser_intensity = 3.5
+laser_intensity = 5.0
 
 [node name="LaserBeam" type="Node3D" parent="Sprayer"]
 script = ExtResource("3_qhldj")

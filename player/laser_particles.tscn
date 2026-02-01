@@ -1,0 +1,7 @@
+[gd_scene load_steps=2 format=3 uid="uid://c1ycu14i37n5r"]
+
+[ext_resource type="Script" uid="uid://c4jphekup62ap" path="res://player/laser_particles.gd" id="1_gj7i8"]
+
+[node name="LaserParticles" type="Node3D"]
+script = ExtResource("1_gj7i8")
+sparks_size_max = 0.17

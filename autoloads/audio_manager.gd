@@ -36,7 +36,7 @@ func _load_sounds() -> void:
 	
 	if contact_sound:
 		_contact_player.stream = contact_sound
-		_contact_player.volume_db = -16.0
+		_contact_player.volume_db = -70.0
 
 
 func play_ding() -> void:

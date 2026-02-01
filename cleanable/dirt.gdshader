@@ -19,7 +19,8 @@ uniform sampler2D flash_mask : hint_default_black, filter_linear;
 
 // Dirt vision
 uniform bool dirt_vision_enabled = false;
-uniform vec3 dirt_glow_color : source_color = vec3(1.0, 0.3, 0.1);
+uniform vec3 rust_glow_color : source_color = vec3(1.0, 0.3, 0.1);
+uniform vec3 metal_glow_color : source_color = vec3(0.3, 0.5, 1.0);
 uniform float dirt_glow_intensity : hint_range(0.0, 10.0) = 5.0;
 uniform float clean_transparency : hint_range(0.0, 1.0) = 0.15;
 uniform float dirty_transparency : hint_range(0.0, 1.0) = 1.0;
@@ -64,14 +65,20 @@ void fragment() {
 		// Pulsing effect
 		float pulse = pulse_min + (1.0 - pulse_min) * (0.5 + 0.5 * sin(TIME * pulse_speed));
 		
-		// Dirty areas: bright glow
-		emission += dirt_glow_color * dirt_amount * dirt_glow_intensity * pulse;
+		// Different colors for rust vs metal layer
+		vec3 glow_color = mix(metal_glow_color, rust_glow_color, step(0.01, rust_amount));
+		
+		// Boost visibility of small amounts
+		float boosted_dirt = pow(dirt_amount, 0.5);  // Square root makes small values more visible
+		
+		// Bright glow for any remaining dirt
+		emission += glow_color * boosted_dirt * dirt_glow_intensity * pulse;
 		
 		// Darken clean areas so dirt stands out
-		albedo = mix(vec3(0.02), albedo * 0.3, dirt_amount);
+		albedo = mix(vec3(0.02), glow_color * 0.5, boosted_dirt);
 		
 		// Clean = very transparent, Dirty = opaque
-		ALPHA = mix(clean_transparency, dirty_transparency, dirt_amount);
+		ALPHA = mix(clean_transparency, dirty_transparency, boosted_dirt);
 	} else {
 		ALPHA = 1.0;
 	}

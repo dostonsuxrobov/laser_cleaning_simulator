@@ -20,6 +20,7 @@ signal target_lost()
 var _camera: Camera3D
 var _laser_beam: Node3D
 var _laser_impact: Node3D
+var _laser_particles: Node3D  # Add this
 var _laser_active: bool = false
 var _current_brush_size: int = 8
 var _is_contacting: bool = false
@@ -32,6 +33,13 @@ func _ready() -> void:
 	_camera = get_viewport().get_camera_3d()
 	_laser_beam = $LaserBeam
 	_laser_impact = $LaserImpact
+	_setup_particles()  # Add this
+
+
+func _setup_particles() -> void:
+	var particles_scene := preload("res://player/laser_particles.tscn")
+	_laser_particles = particles_scene.instantiate()
+	add_child(_laser_particles)
 
 
 func _input(event: InputEvent) -> void:
@@ -42,6 +50,7 @@ func _input(event: InputEvent) -> void:
 			if not _laser_active:
 				_laser_beam.hide_beam()
 				_laser_impact.hide_impact()
+				_laser_particles.hide_particles()  # Add this
 				_stop_contact()
 		
 		elif event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
@@ -61,6 +70,7 @@ func _physics_process(delta: float) -> void:
 	else:
 		_laser_beam.hide_beam()
 		_laser_impact.hide_impact()
+		_laser_particles.hide_particles()  # Add this
 		_stop_contact()
 
 
@@ -119,6 +129,7 @@ func _spray(delta: float) -> void:
 	if result.is_empty():
 		beam_end = ray_to
 		_laser_impact.hide_impact()
+		_laser_particles.hide_particles()  # Add this
 		_stop_contact()
 	else:
 		beam_end = result.position
@@ -133,8 +144,10 @@ func _spray(delta: float) -> void:
 			var pressure := _get_pressure_multiplier()
 			hit_object.clean_at(result.position, hit_normal, laser_intensity, effectiveness, delta, _current_brush_size, pressure)
 			_start_contact()
+			_laser_particles.show_particles(beam_end, hit_normal)  # Add this
 		else:
 			_stop_contact()
+			_laser_particles.hide_particles()  # Add this
 	
 	_laser_beam.show_beam(global_position, beam_end)
 

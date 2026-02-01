@@ -1,5 +1,6 @@
 extends StaticBody3D
 ## Cleanable Mesh - CPU painting with zone-based completion.
+## Supports unlimited zones via color tolerance matching.
 
 signal zone_completed(zone_color: Color, world_position: Vector3)
 signal object_completed
@@ -9,14 +10,7 @@ signal object_completed
 @export var zone_map: Texture2D
 
 @export_group("Zone Names")
-@export var zone_names: Dictionary = {
-	"1,0,0": "Zone 1",
-	"0,1,0": "Zone 2",
-	"0,0,1": "Zone 3",
-	"1,1,0": "Zone 4",
-	"1,0,1": "Zone 5",
-	"0,1,1": "Zone 6"
-}
+@export var zone_names: Dictionary = {}
 
 @export_group("Cleaning Speed")
 @export_range(0.1, 5.0, 0.1) var laser_power: float = 1.0
@@ -24,8 +18,10 @@ signal object_completed
 @export_range(0.1, 5.0, 0.1) var metal_resistance: float = 1.5
 
 @export_group("Completion")
-@export_range(0.5, 1.0, 0.05) var auto_complete_threshold: float = 0.95
+@export_range(0.8, 1.0, 0.01) var rust_complete_threshold: float = 0.91
+@export_range(0.8, 1.0, 0.01) var metal_complete_threshold: float = 0.89
 @export var flash_fade_speed: float = 2.0
+@export_range(0.05, 0.3, 0.01) var color_tolerance: float = 0.15
 
 var _dirt_image: Image
 var _dirt_texture: ImageTexture
@@ -39,6 +35,8 @@ var _mesh_data: MeshDataTool
 var _zones: Dictionary = {}
 var _completed_pixels: Dictionary = {}
 var _flashing_zones: Dictionary = {}
+var _zone_auto_names: Dictionary = {}
+var _pixel_to_zone: Dictionary = {}
 
 
 func _ready() -> void:
@@ -139,45 +137,132 @@ func _setup_zones() -> void:
 	if _zone_image.get_size() != Vector2i(texture_size, texture_size):
 		_zone_image.resize(texture_size, texture_size, Image.INTERPOLATE_NEAREST)
 	
+	var reference_colors: Array[Color] = []
+	for key in zone_names.keys():
+		if key is Color:
+			reference_colors.append(key)
+	
 	for y in texture_size:
 		for x in texture_size:
 			var color := _zone_image.get_pixel(x, y)
 			
-			if color.r < 0.1 and color.g < 0.1 and color.b < 0.1:
+			if _is_black(color):
 				continue
 			
-			var zone_key := _color_to_key(color)
+			var pixel_key: int = x + y * texture_size
+			var zone_key := _find_zone_key_for_color(color, reference_colors)
+			
+			_pixel_to_zone[pixel_key] = zone_key
 			
 			if not _zones.has(zone_key):
 				_zones[zone_key] = {
-					"color": color,
+					"color": _hex_to_color(zone_key),
 					"total": 0,
-					"cleaned": 0,
 					"completed": false,
 					"pixels": [],
 					"sum_x": 0,
-					"sum_y": 0
+					"sum_y": 0,
+					# Layer tracking
+					"rust_total": 0.0,
+					"rust_remaining": 0.0,
+					"metal_total": 0.0,
+					"metal_remaining": 0.0
 				}
 			
 			_zones[zone_key]["total"] += 1
 			_zones[zone_key]["pixels"].append(Vector2i(x, y))
 			_zones[zone_key]["sum_x"] += x
 			_zones[zone_key]["sum_y"] += y
+			
+			# Each pixel starts with rust=1.0 and metal=1.0
+			_zones[zone_key]["rust_total"] += 1.0
+			_zones[zone_key]["rust_remaining"] += 1.0
+			_zones[zone_key]["metal_total"] += 1.0
+			_zones[zone_key]["metal_remaining"] += 1.0
 	
+	var zone_index: int = 1
 	for zone_key in _zones:
 		var zone = _zones[zone_key]
 		var center_x: float = zone["sum_x"] / float(zone["total"]) / texture_size
 		var center_y: float = zone["sum_y"] / float(zone["total"]) / texture_size
 		zone["center_uv"] = Vector2(center_x, center_y)
+		
+		if not _has_zone_name(zone_key):
+			_zone_auto_names[zone_key] = "Zone %d" % zone_index
+		zone_index += 1
 	
 	print("Zones found: ", _zones.size())
+	_print_zone_colors()
 
 
-func _color_to_key(color: Color) -> String:
-	var r: int = 1 if color.r > 0.5 else 0
-	var g: int = 1 if color.g > 0.5 else 0
-	var b: int = 1 if color.b > 0.5 else 0
-	return "%d,%d,%d" % [r, g, b]
+func _find_zone_key_for_color(color: Color, reference_colors: Array[Color]) -> String:
+	for ref_color in reference_colors:
+		if _colors_similar(color, ref_color, color_tolerance):
+			return _color_to_hex(ref_color)
+	
+	for zone_key in _zones.keys():
+		var zone_color: Color = _zones[zone_key]["color"]
+		if _colors_similar(color, zone_color, color_tolerance):
+			return zone_key
+	
+	return _color_to_hex(color)
+
+
+func _print_zone_colors() -> void:
+	print("--- Zone Colors Detected ---")
+	for zone_key in _zones:
+		var name: String = _get_zone_display_name(zone_key)
+		var zone = _zones[zone_key]
+		print("  #%s -> \"%s\" (%d pixels)" % [zone_key, name, zone["total"]])
+	print("--- End ---")
+
+
+func _is_black(color: Color) -> bool:
+	return color.r < 0.05 and color.g < 0.05 and color.b < 0.05
+
+
+func _color_to_hex(color: Color) -> String:
+	var r: int = int(round(color.r * 255))
+	var g: int = int(round(color.g * 255))
+	var b: int = int(round(color.b * 255))
+	return "%02x%02x%02x" % [r, g, b]
+
+
+func _hex_to_color(hex: String) -> Color:
+	var r := float(("0x" + hex.substr(0, 2)).hex_to_int()) / 255.0
+	var g := float(("0x" + hex.substr(2, 2)).hex_to_int()) / 255.0
+	var b := float(("0x" + hex.substr(4, 2)).hex_to_int()) / 255.0
+	return Color(r, g, b)
+
+
+func _colors_similar(a: Color, b: Color, tolerance: float) -> bool:
+	return abs(a.r - b.r) < tolerance and abs(a.g - b.g) < tolerance and abs(a.b - b.b) < tolerance
+
+
+func _has_zone_name(zone_key: String) -> bool:
+	if zone_names.has(zone_key):
+		return true
+	for key in zone_names.keys():
+		if key is Color:
+			if _color_to_hex(key) == zone_key:
+				return true
+	return false
+
+
+func _get_zone_display_name(zone_key: String) -> String:
+	if zone_names.has(zone_key):
+		return zone_names[zone_key]
+	
+	for key in zone_names.keys():
+		if key is Color:
+			var color_hex := _color_to_hex(key)
+			if color_hex == zone_key:
+				return zone_names[key]
+	
+	if _zone_auto_names.has(zone_key):
+		return _zone_auto_names[zone_key]
+	
+	return zone_key
 
 
 func clean_at(world_pos: Vector3, _normal: Vector3, intensity: float, effectiveness: float, delta: float, brush_size: int = 8, pressure: float = 1.0) -> void:
@@ -214,36 +299,49 @@ func _clean_pixel(px: int, py: int, strength: float) -> void:
 	if _completed_pixels.has(pixel_key):
 		return
 	
+	# Get zone for this pixel
+	var zone_key: String = ""
+	var zone = null
+	if _pixel_to_zone.has(pixel_key):
+		zone_key = _pixel_to_zone[pixel_key]
+		if _zones.has(zone_key):
+			zone = _zones[zone_key]
+			if zone["completed"]:
+				return
+	
 	var current: Color = _dirt_image.get_pixel(px, py)
 	var rust: float = current.r
 	var grey: float = current.g
 	
 	if rust > 0.01:
 		var amount: float = strength / rust_resistance
+		var actual_decrease: float = min(amount, rust)
 		rust = max(0.0, rust - amount)
 		_dirt_image.set_pixel(px, py, Color(rust, grey, 0.0))
+		
+		# Track rust cleaned
+		if zone:
+			zone["rust_remaining"] -= actual_decrease
+			_check_zone_completion(zone_key)
+			
 	elif grey > 0.01:
 		var amount: float = strength / metal_resistance
+		var actual_decrease: float = min(amount, grey)
 		grey = max(0.0, grey - amount)
 		_dirt_image.set_pixel(px, py, Color(0.0, grey, 0.0))
+		
+		# Track metal cleaned
+		if zone:
+			zone["metal_remaining"] -= actual_decrease
+			_check_zone_completion(zone_key)
 	
+	# Mark pixel as fully cleaned
 	var is_chrome: bool = rust <= 0.01 and grey <= 0.01
 	if is_chrome:
 		_completed_pixels[pixel_key] = true
-		_on_pixel_completed(px, py)
 
 
-func _on_pixel_completed(px: int, py: int) -> void:
-	if not _zone_image:
-		return
-	
-	var color := _zone_image.get_pixel(px, py)
-	
-	if color.r < 0.1 and color.g < 0.1 and color.b < 0.1:
-		return
-	
-	var zone_key := _color_to_key(color)
-	
+func _check_zone_completion(zone_key: String) -> void:
 	if not _zones.has(zone_key):
 		return
 	
@@ -252,11 +350,12 @@ func _on_pixel_completed(px: int, py: int) -> void:
 	if zone["completed"]:
 		return
 	
-	zone["cleaned"] += 1
+	# Calculate cleaned percentages
+	var rust_cleaned_pct: float = 1.0 - (zone["rust_remaining"] / zone["rust_total"])
+	var metal_cleaned_pct: float = 1.0 - (zone["metal_remaining"] / zone["metal_total"])
 	
-	var progress: float = float(zone["cleaned"]) / float(zone["total"])
-	
-	if progress >= auto_complete_threshold:
+	# Complete if both layers meet threshold
+	if rust_cleaned_pct >= rust_complete_threshold and metal_cleaned_pct >= metal_complete_threshold:
 		_complete_zone(zone_key)
 
 
@@ -267,6 +366,8 @@ func _complete_zone(zone_key: String) -> void:
 		return
 	
 	zone["completed"] = true
+	zone["rust_remaining"] = 0.0
+	zone["metal_remaining"] = 0.0
 	
 	for pixel in zone["pixels"]:
 		var pixel_key: int = pixel.x + pixel.y * texture_size
@@ -278,7 +379,7 @@ func _complete_zone(zone_key: String) -> void:
 	AudioManager.play_ding()
 	
 	emit_signal("zone_completed", zone["color"], global_position)
-	print("Zone completed: ", zone_key)
+	print("Zone completed: ", zone_key, " (", _get_zone_display_name(zone_key), ")")
 	
 	_check_object_completed()
 	
@@ -383,51 +484,58 @@ func get_zone_at_position(world_pos: Vector3) -> Dictionary:
 	
 	var pixel_x: int = int(uv.x * texture_size) % texture_size
 	var pixel_y: int = int(uv.y * texture_size) % texture_size
+	var pixel_key: int = pixel_x + pixel_y * texture_size
 	
-	if not _zone_image:
+	if not _pixel_to_zone.has(pixel_key):
 		return {}
 	
-	var color := _zone_image.get_pixel(pixel_x, pixel_y)
-	
-	if color.r < 0.1 and color.g < 0.1 and color.b < 0.1:
-		return {}
-	
-	var zone_key := _color_to_key(color)
+	var zone_key: String = _pixel_to_zone[pixel_key]
 	
 	if not _zones.has(zone_key):
 		return {}
 	
 	var zone = _zones[zone_key]
-	var progress: float = float(zone["cleaned"]) / float(zone["total"]) if zone["total"] > 0 else 0.0
 	
-	# Get name from object's zone_names, fallback to key
-	var display_name: String = zone_names.get(zone_key, zone_key)
+	# Calculate progress based on both layers
+	var rust_progress: float = 1.0 - (zone["rust_remaining"] / zone["rust_total"])
+	var metal_progress: float = 1.0 - (zone["metal_remaining"] / zone["metal_total"])
+	
+	# Combined progress: rust is first half, metal is second half
+	var combined_progress: float
+	if zone["completed"]:
+		combined_progress = 1.0
+	else:
+		combined_progress = (rust_progress * 0.5) + (metal_progress * 0.5)
 	
 	return {
 		"key": zone_key,
-		"name": display_name,
-		"progress": progress,
+		"name": _get_zone_display_name(zone_key),
+		"progress": combined_progress,
 		"completed": zone["completed"]
 	}
 
 
 ## Returns overall cleaning progress (0.0 to 1.0)
 func get_total_progress() -> float:
-	var total_pixels: int = 0
-	var cleaned_pixels: int = 0
+	var total_rust: float = 0.0
+	var total_metal: float = 0.0
+	var remaining_rust: float = 0.0
+	var remaining_metal: float = 0.0
 	
 	for zone_key in _zones:
 		var zone = _zones[zone_key]
-		total_pixels += zone["total"]
-		if zone["completed"]:
-			cleaned_pixels += zone["total"]
-		else:
-			cleaned_pixels += zone["cleaned"]
+		total_rust += zone["rust_total"]
+		total_metal += zone["metal_total"]
+		remaining_rust += zone["rust_remaining"]
+		remaining_metal += zone["metal_remaining"]
 	
-	if total_pixels == 0:
+	if total_rust + total_metal == 0:
 		return 0.0
 	
-	return float(cleaned_pixels) / float(total_pixels)
+	var rust_progress: float = 1.0 - (remaining_rust / total_rust)
+	var metal_progress: float = 1.0 - (remaining_metal / total_metal)
+	
+	return (rust_progress + metal_progress) / 2.0
 
 
 ## Returns dictionary of zone states for UI
@@ -435,8 +543,47 @@ func get_zones_state() -> Dictionary:
 	var state: Dictionary = {}
 	for zone_key in _zones:
 		var zone = _zones[zone_key]
+		var rust_progress: float = 1.0 - (zone["rust_remaining"] / zone["rust_total"])
+		var metal_progress: float = 1.0 - (zone["metal_remaining"] / zone["metal_total"])
+		var combined: float = (rust_progress + metal_progress) / 2.0
+		
 		state[zone_key] = {
+			"name": _get_zone_display_name(zone_key),
 			"completed": zone["completed"],
-			"progress": float(zone["cleaned"]) / float(zone["total"]) if zone["total"] > 0 else 0.0
+			"progress": combined if not zone["completed"] else 1.0
 		}
 	return state
+	
+	
+func _input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and event.keycode == KEY_P:
+		_print_zone_progress()
+
+
+func _print_zone_progress() -> void:
+	print("=== ZONE PROGRESS ===")
+	for zone_key in _zones:
+		var zone = _zones[zone_key]
+		var rust_pct: float = 1.0 - (zone["rust_remaining"] / zone["rust_total"])
+		var metal_pct: float = 1.0 - (zone["metal_remaining"] / zone["metal_total"])
+		var name: String = _get_zone_display_name(zone_key)
+		print("%s: Rust %.1f%% | Metal %.1f%% | Complete: %s" % [
+			name,
+			rust_pct * 100,
+			metal_pct * 100,
+			"YES" if zone["completed"] else "NO"
+		])
+	print("=====================")
+
+## Returns copy of current dirt image for replay recording
+func get_dirt_image() -> Image:
+	if _dirt_image:
+		return _dirt_image
+	return null
+
+
+## Sets dirt image for replay playback
+func set_dirt_image(img: Image) -> void:
+	if img and _dirt_image:
+		_dirt_image.copy_from(img)
+		_dirt_texture.update(_dirt_image)
