@@ -97,6 +97,6 @@ func _on_start_pressed() -> void:
 	queue_free()
 
 
-func set_job_name(name: String) -> void:
+func set_job_name(new_name: String) -> void:
 	if _title_label:
-		_title_label.text = name
+		_title_label.text = new_name

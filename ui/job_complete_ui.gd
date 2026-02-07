@@ -1,7 +1,7 @@
 extends CanvasLayer
 ## Job complete screen - shows replay and stats.
 
-const REPLAY_SPEED_MULTIPLIER: float = 3.0  # 3x speed
+const REPLAY_SPEED_MULTIPLIER: float = 3.0
 
 var _replay_rect: TextureRect
 var _time_label: Label
@@ -9,7 +9,7 @@ var _title_label: Label
 var _replay_progress: ProgressBar
 var _replay_time_label: Label
 
-var _replay_frames: Array[Image] = []
+var _replay_frame_count: int = 0
 var _replay_index: int = 0
 var _replay_speed: float = 1.0
 var _replay_timer: float = 0.0
@@ -24,16 +24,14 @@ func _ready() -> void:
 
 
 func show_results(stats: Dictionary) -> void:
-	_replay_frames = ReplayRecorder.get_frames()
+	_replay_frame_count = ReplayRecorder.get_frame_count()
 	_actual_time = stats.get("time", 0.0)
 	
-	# Replay duration = actual time / 3
 	_replay_duration = _actual_time / REPLAY_SPEED_MULTIPLIER
-	_replay_duration = max(_replay_duration, 1.0)  # Minimum 1 second
+	_replay_duration = max(_replay_duration, 1.0)
 	
-	# Calculate FPS to fit all frames in replay duration
-	if _replay_frames.size() > 0:
-		_replay_speed = float(_replay_frames.size()) / _replay_duration
+	if _replay_frame_count > 0:
+		_replay_speed = float(_replay_frame_count) / _replay_duration
 		_replay_speed = max(_replay_speed, 1.0)
 	
 	get_tree().paused = true
@@ -122,9 +120,11 @@ func _setup_ui(stats: Dictionary) -> void:
 	_replay_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	replay_panel.add_child(_replay_rect)
 	
-	if _replay_frames.size() > 0:
-		_replay_texture = ImageTexture.create_from_image(_replay_frames[0])
-		_replay_rect.texture = _replay_texture
+	if _replay_frame_count > 0:
+		var first_frame := ReplayRecorder.get_frame(0)
+		if first_frame:
+			_replay_texture = ImageTexture.create_from_image(first_frame)
+			_replay_rect.texture = _replay_texture
 	
 	# Progress bar with time
 	var progress_hbox := HBoxContainer.new()
@@ -140,9 +140,8 @@ func _setup_ui(stats: Dictionary) -> void:
 	_replay_progress.show_percentage = false
 	progress_hbox.add_child(_replay_progress)
 	
-	# Format replay duration for display
-	var replay_min: int = int(_replay_duration) / 60
-	var replay_sec: int = int(_replay_duration) % 60
+	var replay_min: int = floori(_replay_duration / 60.0)
+	var replay_sec: int = floori(_replay_duration) % 60
 	
 	_replay_time_label = Label.new()
 	_replay_time_label.text = "0:00 / %d:%02d" % [replay_min, replay_sec]
@@ -153,8 +152,8 @@ func _setup_ui(stats: Dictionary) -> void:
 	
 	# Actual time
 	var time_seconds: float = stats.get("time", 0.0)
-	var minutes: int = int(time_seconds) / 60
-	var seconds: int = int(time_seconds) % 60
+	var minutes: int = floori(time_seconds / 60.0)
+	var seconds: int = floori(time_seconds) % 60
 	
 	_time_label = Label.new()
 	_time_label.text = "Time: %d:%02d" % [minutes, seconds]
@@ -195,7 +194,7 @@ func _setup_ui(stats: Dictionary) -> void:
 
 
 func _start_replay() -> void:
-	if _replay_frames.size() == 0:
+	if _replay_frame_count == 0:
 		return
 	
 	_replay_index = 0
@@ -207,7 +206,7 @@ func _process(delta: float) -> void:
 	if not _is_replaying:
 		return
 	
-	if _replay_frames.size() == 0:
+	if _replay_frame_count == 0:
 		return
 	
 	_replay_timer += delta
@@ -218,8 +217,8 @@ func _process(delta: float) -> void:
 		_replay_timer = 0.0
 		_replay_index += 1
 		
-		if _replay_index >= _replay_frames.size():
-			_replay_index = _replay_frames.size() - 1
+		if _replay_index >= _replay_frame_count:
+			_replay_index = _replay_frame_count - 1
 			_is_replaying = false
 			_loop_replay()
 		
@@ -232,24 +231,26 @@ func _loop_replay() -> void:
 
 
 func _update_replay_display() -> void:
-	if _replay_index < 0 or _replay_index >= _replay_frames.size():
+	if _replay_index < 0 or _replay_index >= _replay_frame_count:
 		return
 	
-	var frame: Image = _replay_frames[_replay_index]
+	var frame: Image = ReplayRecorder.get_frame(_replay_index)
+	if not frame:
+		return
 	
 	if _replay_texture:
 		_replay_texture.update(frame)
 	
 	# Progress
-	var progress: float = float(_replay_index) / float(max(_replay_frames.size() - 1, 1))
+	var progress: float = float(_replay_index) / float(max(_replay_frame_count - 1, 1))
 	_replay_progress.value = progress
 	
 	# Time display
 	var current_time: float = progress * _replay_duration
-	var current_min: int = int(current_time) / 60
-	var current_sec: int = int(current_time) % 60
-	var total_min: int = int(_replay_duration) / 60
-	var total_sec: int = int(_replay_duration) % 60
+	var current_min: int = floori(current_time / 60.0)
+	var current_sec: int = floori(current_time) % 60
+	var total_min: int = floori(_replay_duration / 60.0)
+	var total_sec: int = floori(_replay_duration) % 60
 	_replay_time_label.text = "%d:%02d / %d:%02d" % [current_min, current_sec, total_min, total_sec]
 
 

@@ -3,30 +3,72 @@ extends Node
 
 @export var job_name: String = "The Cube"
 @export var cleanable_path: NodePath
-@export var replay_camera_path: NodePath  # Add this
+@export var replay_camera_path: NodePath
 
 var _cleanable: Node3D
 var _intro_ui: CanvasLayer
 var _complete_ui: CanvasLayer
 
+const MAX_WAIT_FRAMES: int = 10
+
 
 func _ready() -> void:
+	_wait_for_cleanable()
+
+
+func _wait_for_cleanable(attempts: int = 0) -> void:
+	# Try path first
 	if cleanable_path:
-		_cleanable = get_node(cleanable_path)
+		_cleanable = get_node_or_null(cleanable_path)
 	
+	# Then try group
+	if not _cleanable:
+		_cleanable = _find_cleanable()
+	
+	if _cleanable:
+		_initialize()
+		return
+	
+	if attempts >= MAX_WAIT_FRAMES:
+		push_error("Cleanable not found after %d frames! Add a node to 'cleanable' group or set cleanable_path." % MAX_WAIT_FRAMES)
+		return
+	
+	# Try again next frame
+	await get_tree().process_frame
+	_wait_for_cleanable(attempts + 1)
+
+
+func _initialize() -> void:
 	# Setup replay camera
 	if replay_camera_path:
-		var replay_cam: Camera3D = get_node(replay_camera_path)
+		var replay_cam: Camera3D = get_node_or_null(replay_camera_path)
+		if replay_cam:
+			ReplayRecorder.setup_camera(replay_cam)
+	else:
+		var replay_cam := _find_replay_camera()
 		if replay_cam:
 			ReplayRecorder.setup_camera(replay_cam)
 	
 	GameManager.set_job(_cleanable, job_name)
 	GameManager.job_completed.connect(_on_job_completed)
 	
-	if _cleanable and _cleanable.has_signal("object_completed"):
-		_cleanable.object_completed.connect(_on_object_completed)
+	_cleanable.object_completed.connect(_on_object_completed)
 	
 	_show_intro()
+
+
+func _find_cleanable() -> Node3D:
+	var cleanables := get_tree().get_nodes_in_group("cleanable")
+	if cleanables.size() > 0:
+		return cleanables[0] as Node3D
+	return null
+
+
+func _find_replay_camera() -> Camera3D:
+	var cameras := get_tree().get_nodes_in_group("replay_camera")
+	if cameras.size() > 0:
+		return cameras[0] as Camera3D
+	return null
 
 
 func _show_intro() -> void:

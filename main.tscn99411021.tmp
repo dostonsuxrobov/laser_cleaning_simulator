@@ -1,0 +1,61 @@
+[gd_scene load_steps=11 format=3 uid="uid://bdgp2igqis1i1"]
+
+[ext_resource type="PackedScene" path="res://player/player.tscn" id="1_player"]
+[ext_resource type="PackedScene" uid="uid://cuvw7wo5poaul" path="res://cleanable/cube/cube.tscn" id="4_1bvp3"]
+[ext_resource type="PackedScene" path="res://ui/crosshair.tscn" id="4_crosshair"]
+[ext_resource type="PackedScene" uid="uid://dnnusigrbobql" path="res://cleanable/factory/factory.tscn" id="6_5vw27"]
+[ext_resource type="Script" uid="uid://bpnjkwjujhjrx" path="res://ui/progress_ui.gd" id="6_7mycd"]
+[ext_resource type="Script" uid="uid://0t88ui10hjqu" path="res://game_flow.gd" id="6_272bh"]
+[ext_resource type="PackedScene" uid="uid://col6rd50nenxi" path="res://cleanable/car/car.tscn" id="7_272bh"]
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
+sky_top_color = Color(0.4, 0.6, 0.8, 1)
+sky_horizon_color = Color(0.7, 0.8, 0.9, 1)
+ground_bottom_color = Color(0.2, 0.2, 0.2, 1)
+ground_horizon_color = Color(0.5, 0.5, 0.5, 1)
+
+[sub_resource type="Sky" id="Sky_1"]
+sky_material = SubResource("ProceduralSkyMaterial_1")
+
+[sub_resource type="Environment" id="Environment_1"]
+background_mode = 2
+sky = SubResource("Sky_1")
+ambient_light_source = 2
+ambient_light_color = Color(0.8, 0.8, 0.85, 1)
+ambient_light_energy = 0.5
+tonemap_mode = 2
+ssao_enabled = true
+
+[node name="Main" type="Node3D"]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_1")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.866, -0.354, 0.354, 0, 0.707, 0.707, -0.5, -0.612, 0.612, 0, 10, 0)
+shadow_enabled = true
+
+[node name="Player" parent="." instance=ExtResource("1_player")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
+
+[node name="Crosshair" parent="." instance=ExtResource("4_crosshair")]
+
+[node name="cube" parent="." instance=ExtResource("4_1bvp3")]
+transform = Transform3D(0.8254683, -0.3770744, 0.42002022, 0.5644485, 0.5514462, -0.6142516, 0, 0.744125, 0.6680404, 0, 1.4006636, -6.589459)
+
+[node name="ProgressUI" type="CanvasLayer" parent="."]
+script = ExtResource("6_7mycd")
+
+[node name="GameFlow" type="Node" parent="."]
+script = ExtResource("6_272bh")
+cleanable_path = NodePath("../cube")
+replay_camera_path = NodePath("../ReplayCamera")
+
+[node name="ReplayCamera" type="Camera3D" parent="."]
+transform = Transform3D(0.7505957, 0, -0.66076183, 0, 1, 0, 0.66076183, 0, 0.7505957, -4.7754507, 4.223119, 2.4453225)
+
+[node name="factory" parent="." instance=ExtResource("6_5vw27")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.43052292, -13.336111)
+
+[node name="car" parent="." instance=ExtResource("7_272bh")]
+transform = Transform3D(0.02416044, 0, 0, 0, 0.02416044, 0, 0, 0, 0.02416044, -3.7820446, 0.40920758, -4.91288)

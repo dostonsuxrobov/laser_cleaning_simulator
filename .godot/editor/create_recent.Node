@@ -1,7 +1,7 @@
+CollisionShape3D
+Node3D
+StaticBody3D
 Camera3D
 Node
 CanvasLayer
-Node3D
-CollisionShape3D
-StaticBody3D
 MeshInstance3D
