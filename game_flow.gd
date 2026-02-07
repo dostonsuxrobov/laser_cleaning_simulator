@@ -1,13 +1,13 @@
 extends Node
-## Game Flow - manages intro and complete screens.
+## Game Flow - manages game start and complete screen.
 
 @export var job_name: String = "The Cube"
 @export var cleanable_path: NodePath
 @export var replay_camera_path: NodePath
 
 var _cleanable: Node3D
-var _intro_ui: CanvasLayer
 var _complete_ui: CanvasLayer
+var _pause_menu: CanvasLayer
 
 const MAX_WAIT_FRAMES: int = 10
 
@@ -17,11 +17,9 @@ func _ready() -> void:
 
 
 func _wait_for_cleanable(attempts: int = 0) -> void:
-	# Try path first
 	if cleanable_path:
 		_cleanable = get_node_or_null(cleanable_path)
 	
-	# Then try group
 	if not _cleanable:
 		_cleanable = _find_cleanable()
 	
@@ -30,16 +28,14 @@ func _wait_for_cleanable(attempts: int = 0) -> void:
 		return
 	
 	if attempts >= MAX_WAIT_FRAMES:
-		push_error("Cleanable not found after %d frames! Add a node to 'cleanable' group or set cleanable_path." % MAX_WAIT_FRAMES)
+		push_error("Cleanable not found after %d frames!" % MAX_WAIT_FRAMES)
 		return
 	
-	# Try again next frame
 	await get_tree().process_frame
 	_wait_for_cleanable(attempts + 1)
 
 
 func _initialize() -> void:
-	# Setup replay camera
 	if replay_camera_path:
 		var replay_cam: Camera3D = get_node_or_null(replay_camera_path)
 		if replay_cam:
@@ -52,9 +48,15 @@ func _initialize() -> void:
 	GameManager.set_job(_cleanable, job_name)
 	GameManager.job_completed.connect(_on_job_completed)
 	
-	_cleanable.object_completed.connect(_on_object_completed)
+	# Add pause menu
+	var pause_script := preload("res://ui/pause_menu.gd")
+	_pause_menu = CanvasLayer.new()
+	_pause_menu.set_script(pause_script)
+	add_child(_pause_menu)
 	
-	_show_intro()
+	# Start immediately
+	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+	GameManager.start_job()
 
 
 func _find_cleanable() -> Node3D:
@@ -69,17 +71,6 @@ func _find_replay_camera() -> Camera3D:
 	if cameras.size() > 0:
 		return cameras[0] as Camera3D
 	return null
-
-
-func _show_intro() -> void:
-	var intro_script := preload("res://ui/job_intro_ui.gd")
-	_intro_ui = CanvasLayer.new()
-	_intro_ui.set_script(intro_script)
-	add_child(_intro_ui)
-
-
-func _on_object_completed() -> void:
-	GameManager.complete_job()
 
 
 func _on_job_completed(stats: Dictionary) -> void:

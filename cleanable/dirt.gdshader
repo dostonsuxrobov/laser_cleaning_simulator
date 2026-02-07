@@ -15,8 +15,8 @@ uniform float chrome_roughness : hint_range(0.0, 1.0) = 0.1;
 uniform float chrome_metallic : hint_range(0.0, 1.0) = 1.0;
 
 uniform sampler2D dirt_mask : hint_default_white, filter_linear;
+uniform sampler2D flash_mask : hint_default_black, filter_linear;
 uniform sampler2D zone_mask : hint_default_black, filter_linear;
-uniform float flash_intensity : hint_range(0.0, 1.0) = 0.0;
 
 // Dirt vision
 uniform bool dirt_vision_enabled = false;
@@ -54,8 +54,9 @@ void fragment() {
 	normal_map = mix(normal_map, rust_nrm, rust_amount);
 	roughness = mix(roughness, rust_roughness, rust_amount);
 
-	// Flash effect — whole mesh flashes on zone completion
-	vec3 emission = vec3(1.0) * flash_intensity * 3.0;
+	// Per-zone flash from flash_mask texture
+	float flash = texture(flash_mask, UV).r;
+	vec3 emission = vec3(1.0) * flash * 3.0;
 
 	// Dirt vision mode
 	if (dirt_vision_enabled) {

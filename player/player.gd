@@ -1,20 +1,16 @@
 extends CharacterBody3D
 ## Player controller - handles movement, jump, and sit states.
-## Exposes state for other nodes (like gun) to react to.
 
-# Movement settings
 @export var walk_speed: float = 5.0
 @export var jump_force: float = 5.0
 @export var gravity: float = 15.0
 @export var mouse_sensitivity: float = 0.002
 
-# State (readable by other nodes)
 var is_walking: bool = false
 var is_jumping: bool = false
 var is_sitting: bool = false
 var move_direction: Vector3 = Vector3.ZERO
 
-# Internal
 var _standing_height: float = 1.8
 var _sitting_height: float = 0.9
 
@@ -27,15 +23,10 @@ func _ready() -> void:
 
 
 func _input(event: InputEvent) -> void:
-	# Mouse look
 	if event is InputEventMouseMotion:
 		rotate_y(-event.relative.x * mouse_sensitivity)
 		camera_pivot.rotate_x(-event.relative.y * mouse_sensitivity)
 		camera_pivot.rotation.x = clamp(camera_pivot.rotation.x, -1.5, 1.5)
-	
-	# Escape to release mouse
-	if event.is_action_pressed("ui_cancel"):
-		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 
 
 func _physics_process(delta: float) -> void:
@@ -55,17 +46,15 @@ func _handle_gravity(delta: float) -> void:
 
 
 func _handle_sit() -> void:
-	var want_sit := Input.is_action_pressed("sit") and is_on_floor()
+	var want_sit: bool = Input.is_action_pressed("sit") and is_on_floor()
 	
 	if want_sit and not is_sitting:
-		# Transition to sitting
 		var shape: CapsuleShape3D = collision_shape.shape
 		shape.height = _sitting_height
 		collision_shape.position.y = -0.45
 		camera_pivot.position.y = 0.1
 		is_sitting = true
 	elif not want_sit and is_sitting:
-		# Transition to standing
 		var shape: CapsuleShape3D = collision_shape.shape
 		shape.height = _standing_height
 		collision_shape.position.y = 0.0
@@ -85,7 +74,7 @@ func _handle_movement() -> void:
 	
 	move_direction = (transform.basis * Vector3(input_dir.x, 0, input_dir.y)).normalized()
 	
-	var speed := walk_speed * (0.5 if is_sitting else 1.0)
+	var speed: float = walk_speed * (0.5 if is_sitting else 1.0)
 	
 	if move_direction:
 		velocity.x = move_direction.x * speed

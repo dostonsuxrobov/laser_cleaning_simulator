@@ -30,7 +30,7 @@ signal object_completed
 @export_group("Completion")
 @export_range(0.8, 1.0, 0.01) var rust_complete_threshold: float = 0.91
 @export_range(0.8, 1.0, 0.01) var metal_complete_threshold: float = 0.89
-@export var flash_fade_speed: float = 2.0
+@export var flash_fade_speed: float = 3.0
 @export_range(0.05, 0.3, 0.01) var color_tolerance: float = 0.2
 @export var min_zone_pixels: int = 100
 
@@ -40,6 +40,8 @@ signal object_completed
 
 var _dirt_image: Image
 var _dirt_texture: ImageTexture
+var _flash_data: PackedByteArray
+var _flash_texture: ImageTexture
 var _zone_image: Image
 var _zone_mask_image: Image
 var _zone_mask_texture: ImageTexture
@@ -52,12 +54,12 @@ var _zones: Dictionary = {}
 var _zone_auto_names: Dictionary = {}
 var _pixel_to_zone: Dictionary = {}
 
-var _face_grid: Dictionary = {}  # Vector3i -> Array[int]
+var _face_grid: Dictionary = {}
 var _face_cache: Array[Dictionary] = []
 var _grid_cell_size: float = 1.0
 
 var _dirt_dirty: bool = false
-var _flash_intensity: float = 0.0
+var _flash_active: bool = false
 
 # =============================================================================
 # LIFECYCLE
@@ -93,10 +95,8 @@ func _process(delta: float) -> void:
 		_dirt_texture.update(_dirt_image)
 		_dirt_dirty = false
 	
-	if _flash_intensity > 0.0:
-		_flash_intensity = max(0.0, _flash_intensity - delta * flash_fade_speed)
-		if _material:
-			_material.set_shader_parameter("flash_intensity", _flash_intensity)
+	if _flash_active:
+		_fade_flash(delta)
 
 
 func _input(event: InputEvent) -> void:
@@ -349,6 +349,14 @@ func _setup_textures() -> void:
 	_dirt_image.fill(Color(1.0, 1.0, 0.0))
 	_dirt_texture = ImageTexture.create_from_image(_dirt_image)
 	
+	# Flash mask — raw byte array, uploaded as R8 texture
+	var pixel_count: int = texture_size * texture_size
+	_flash_data = PackedByteArray()
+	_flash_data.resize(pixel_count)
+	_flash_data.fill(0)
+	var flash_image: Image = Image.create_from_data(texture_size, texture_size, false, Image.FORMAT_R8, _flash_data)
+	_flash_texture = ImageTexture.create_from_image(flash_image)
+	
 	_zone_mask_image = Image.create(texture_size, texture_size, false, Image.FORMAT_R8)
 	_zone_mask_image.fill(Color(0.0, 0.0, 0.0))
 	_zone_mask_texture = ImageTexture.create_from_image(_zone_mask_image)
@@ -362,8 +370,8 @@ func _setup_textures() -> void:
 	
 	if _material:
 		_material.set_shader_parameter("dirt_mask", _dirt_texture)
+		_material.set_shader_parameter("flash_mask", _flash_texture)
 		_material.set_shader_parameter("zone_mask", _zone_mask_texture)
-		_material.set_shader_parameter("flash_intensity", 0.0)
 		print("Material found on surface %d" % surface_index)
 	else:
 		push_warning("No ShaderMaterial found on surface %d" % surface_index)
@@ -503,7 +511,6 @@ func _paint_square(cx: int, cy: int, strength: float, brush_size: int) -> void:
 func _clean_pixel(px: int, py: int, strength: float) -> void:
 	var pixel_key: int = px + py * texture_size
 	
-	# Check if pixel belongs to a completed zone
 	var zone_key: String = ""
 	var zone: Variant = null
 	
@@ -518,7 +525,6 @@ func _clean_pixel(px: int, py: int, strength: float) -> void:
 	var rust: float = current.r
 	var grey: float = current.g
 	
-	# Already clean
 	if rust <= 0.01 and grey <= 0.01:
 		return
 	
@@ -572,17 +578,21 @@ func _complete_zone(zone_key: String) -> void:
 	zone["rust_remaining"] = 0.0
 	zone["metal_remaining"] = 0.0
 	
-	# Clear all zone pixels using raw bytes
+	# Clear dirt pixels using raw bytes
 	var dirt_data: PackedByteArray = _dirt_image.get_data()
 	for pixel: Vector2i in zone["pixels"]:
-		var idx: int = (pixel.x + pixel.y * texture_size) * 2  # RG8 = 2 bytes
+		var idx: int = (pixel.x + pixel.y * texture_size) * 2
 		dirt_data[idx] = 0
 		dirt_data[idx + 1] = 0
 	_dirt_image = Image.create_from_data(texture_size, texture_size, false, Image.FORMAT_RG8, dirt_data)
 	_dirt_dirty = true
 	
+	# Write this zone's pixels into flash mask at full brightness
+	for pixel: Vector2i in zone["pixels"]:
+		_flash_data[pixel.x + pixel.y * texture_size] = 255
+	_flash_active = true
+	
 	AudioManager.play_ding()
-	_flash_intensity = 1.0
 	
 	emit_signal("zone_completed", zone["color"], global_position)
 	print("Zone completed: ", zone_key, " (", _get_zone_display_name(zone_key), ")")
@@ -599,13 +609,38 @@ func _check_object_completed() -> void:
 	print("Object fully completed!")
 
 # =============================================================================
+# FLASH
+# =============================================================================
+
+func _fade_flash(delta: float) -> void:
+	var fade_amount: int = int(255.0 * flash_fade_speed * delta)
+	fade_amount = max(fade_amount, 1)
+	
+	var any_active: bool = false
+	var pixel_count: int = _flash_data.size()
+	
+	for i: int in range(pixel_count):
+		if _flash_data[i] > 0:
+			var val: int = _flash_data[i] - fade_amount
+			if val < 0:
+				val = 0
+			_flash_data[i] = val
+			if val > 0:
+				any_active = true
+	
+	var flash_image: Image = Image.create_from_data(texture_size, texture_size, false, Image.FORMAT_R8, _flash_data)
+	_flash_texture.update(flash_image)
+	
+	if not any_active:
+		_flash_active = false
+
+# =============================================================================
 # UV LOOKUP
 # =============================================================================
 
 func _find_uv_at_position(local_pos: Vector3) -> Vector2:
 	if _face_cache.is_empty():
 		return Vector2(-1, -1)
-	
 	return _grid_lookup(local_pos)
 
 

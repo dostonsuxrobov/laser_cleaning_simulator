@@ -1,12 +1,11 @@
 extends CanvasLayer
 ## Progress UI - dual ring progress indicator.
 ## No zone: single ring with overall % in center.
-## Zone targeted: outer ring (overall), inner ring (zone) with zone name + % in center.
+## Zone targeted: outer + inner ring, zone name + % in center.
 
 var _container: Control
 var _background: Control
 var _rings: Control
-
 var _center_label: Label
 var _center_percent: Label
 
@@ -22,20 +21,17 @@ var _current_zone_name: String = ""
 var _sprayer: Node3D
 var _cleanable: Node3D
 
-# Ring sizes
 const OUTER_RADIUS: float = 52.0
 const OUTER_THICKNESS: float = 5.0
 const INNER_RADIUS: float = 43.0
 const INNER_THICKNESS: float = 4.0
 
-# Colors
 const RING_COLOR: Color = Color(1.0, 1.0, 1.0, 0.9)
 const RING_BG_COLOR: Color = Color(1.0, 1.0, 1.0, 0.1)
 const COMPLETE_COLOR: Color = Color(0.3, 1.0, 0.3, 1.0)
 const BG_COLOR: Color = Color(0.0, 0.0, 0.0, 0.75)
 const LABEL_DIM: Color = Color(0.6, 0.6, 0.6)
 const LABEL_BRIGHT: Color = Color(1.0, 1.0, 1.0)
-
 const WIDGET_SIZE: float = 130.0
 
 
@@ -68,7 +64,6 @@ func _setup_ui() -> void:
 	_rings.draw.connect(_draw_rings)
 	_container.add_child(_rings)
 	
-	# Top label: "OVERALL" or zone name
 	_center_label = Label.new()
 	_center_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_center_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -79,7 +74,6 @@ func _setup_ui() -> void:
 	_center_label.position.y = -10
 	_container.add_child(_center_label)
 	
-	# Center percent
 	_center_percent = Label.new()
 	_center_percent.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_center_percent.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -100,19 +94,16 @@ func _draw_rings() -> void:
 	var center := Vector2(WIDGET_SIZE, WIDGET_SIZE) / 2.0
 	
 	if _has_zone_target:
-		# Outer ring: overall
 		_draw_arc_ring(center, OUTER_RADIUS, 0.0, 1.0, RING_BG_COLOR, OUTER_THICKNESS)
 		if _display_overall > 0.001:
 			var color: Color = COMPLETE_COLOR if _display_overall >= 0.99 else RING_COLOR
 			_draw_arc_ring(center, OUTER_RADIUS, 0.0, _display_overall, color, OUTER_THICKNESS)
 		
-		# Inner ring: zone
 		_draw_arc_ring(center, INNER_RADIUS, 0.0, 1.0, RING_BG_COLOR, INNER_THICKNESS)
 		if _display_zone > 0.001:
 			var color: Color = COMPLETE_COLOR if _zone_completed else RING_COLOR
 			_draw_arc_ring(center, INNER_RADIUS, 0.0, _display_zone, color, INNER_THICKNESS)
 	else:
-		# Single ring: overall
 		_draw_arc_ring(center, OUTER_RADIUS, 0.0, 1.0, RING_BG_COLOR, OUTER_THICKNESS)
 		if _display_overall > 0.001:
 			var color: Color = COMPLETE_COLOR if _display_overall >= 0.99 else RING_COLOR
@@ -172,7 +163,6 @@ func _find_node_with_signal(node: Node, signal_name: String) -> Node:
 func _on_target_changed(zone_name: String, progress: float, completed: bool) -> void:
 	if _is_job_finished:
 		return
-	
 	_has_zone_target = true
 	_zone_completed = completed or progress >= 0.95
 	_zone_progress = 1.0 if _zone_completed else progress
@@ -187,11 +177,9 @@ func _process(delta: float) -> void:
 	if _is_job_finished:
 		return
 	
-	# Update overall from cleanable
 	if _cleanable and _cleanable.has_method("get_total_progress"):
 		_overall_progress = _cleanable.get_total_progress()
 	
-	# Smooth animations
 	_display_overall = lerp(_display_overall, _overall_progress, delta * 10.0)
 	if abs(_display_overall - _overall_progress) < 0.003:
 		_display_overall = _overall_progress
@@ -203,9 +191,7 @@ func _process(delta: float) -> void:
 	else:
 		_display_zone = lerp(_display_zone, 0.0, delta * 8.0)
 	
-	# Update center text
 	if _has_zone_target:
-		# Show zone info in center
 		_center_label.text = _current_zone_name
 		var zone_pct: int = 100 if _zone_completed else int(_display_zone * 100.0)
 		_center_percent.text = "%d%%" % zone_pct
@@ -217,7 +203,6 @@ func _process(delta: float) -> void:
 			_center_label.add_theme_color_override("font_color", LABEL_DIM)
 			_center_percent.add_theme_color_override("font_color", LABEL_BRIGHT)
 	else:
-		# Show overall info in center
 		_center_label.text = "OVERALL"
 		var overall_pct: int = int(_display_overall * 100.0)
 		if _display_overall >= 0.99:
