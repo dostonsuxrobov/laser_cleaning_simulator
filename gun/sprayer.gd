@@ -3,6 +3,7 @@ extends Node3D
 
 signal target_changed(zone_name: String, progress: float, completed: bool)
 signal target_lost()
+signal brush_size_changed(new_size: int)
 
 @export_group("Laser Settings")
 @export var spray_range: float = 10.0
@@ -20,20 +21,21 @@ signal target_lost()
 var _camera: Camera3D
 var _laser_beam: Node3D
 var _laser_impact: Node3D
-var _laser_particles: Node3D  # Add this
+var _laser_particles: Node3D
 var _laser_active: bool = false
 var _current_brush_size: int = 8
 var _is_contacting: bool = false
 
 var _current_zone_key: String = ""
 var _current_cleanable: Node3D = null
+var _is_aiming_at_cleanable: bool = false
 
 
 func _ready() -> void:
 	_camera = get_viewport().get_camera_3d()
 	_laser_beam = $LaserBeam
 	_laser_impact = $LaserImpact
-	_setup_particles()  # Add this
+	_setup_particles()
 
 
 func _setup_particles() -> void:
@@ -46,31 +48,34 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
 			_laser_active = not _laser_active
-			
+
 			if not _laser_active:
 				_laser_beam.hide_beam()
-				_laser_impact.hide_impact()
-				_laser_particles.hide_particles()  # Add this
+				_hide_particles()
 				_stop_contact()
-		
+
 		elif event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
 			_current_brush_size = min(_current_brush_size + brush_scroll_step, max_brush_size)
-		
+			emit_signal("brush_size_changed", _current_brush_size)
+			AudioManager.play_reload()
+
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
 			_current_brush_size = max(_current_brush_size - brush_scroll_step, min_brush_size)
+			emit_signal("brush_size_changed", _current_brush_size)
+			AudioManager.play_reload()
 
 
 func _physics_process(delta: float) -> void:
 	_update_target()
-	
+
 	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 		_spray(delta)
 	elif _laser_active:
 		_spray(delta)
 	else:
 		_laser_beam.hide_beam()
-		_laser_impact.hide_impact()
-		_laser_particles.hide_particles()  # Add this
+		_laser_impact.set_firing(false)
+		_hide_particles()
 		_stop_contact()
 
 
@@ -78,34 +83,43 @@ func _update_target() -> void:
 	var space_state := get_world_3d().direct_space_state
 	var ray_from := _camera.global_position
 	var ray_to := ray_from + (-_camera.global_basis.z) * spray_range
-	
+
 	var query := PhysicsRayQueryParameters3D.create(ray_from, ray_to)
 	var result := space_state.intersect_ray(query)
-	
+
 	if result.is_empty():
 		_clear_target()
+		_laser_impact.hide_impact()
+		_is_aiming_at_cleanable = false
 		return
-	
+
 	var hit_object: Node3D = result.collider as Node3D
-	
+
 	if hit_object.has_method("get_zone_at_position"):
 		var zone_info: Dictionary = hit_object.get_zone_at_position(result.position)
-		
+
 		if zone_info.is_empty():
 			_clear_target()
+			_laser_impact.hide_impact()
+			_is_aiming_at_cleanable = false
 			return
-		
+
 		var zone_key: String = zone_info["key"]
 		var zone_name: String = zone_info["name"]
 		var progress: float = zone_info["progress"]
 		var completed: bool = zone_info["completed"]
-		
+
 		_current_cleanable = hit_object
 		_current_zone_key = zone_key
-		
+		_is_aiming_at_cleanable = true
+
+		_laser_impact.show_impact(result.position, result.normal, _current_brush_size)
+
 		emit_signal("target_changed", zone_name, progress, completed)
 	else:
 		_clear_target()
+		_laser_impact.hide_impact()
+		_is_aiming_at_cleanable = false
 
 
 func _clear_target() -> void:
@@ -117,38 +131,37 @@ func _clear_target() -> void:
 
 func _spray(delta: float) -> void:
 	var space_state := get_world_3d().direct_space_state
-	
+
 	var ray_from := _camera.global_position
 	var ray_to := ray_from + (-_camera.global_basis.z) * spray_range
-	
+
 	var query := PhysicsRayQueryParameters3D.create(ray_from, ray_to)
 	var result := space_state.intersect_ray(query)
-	
+
 	var beam_end: Vector3
-	
+
 	if result.is_empty():
 		beam_end = ray_to
-		_laser_impact.hide_impact()
-		_laser_particles.hide_particles()  # Add this
+		_hide_particles()
 		_stop_contact()
 	else:
 		beam_end = result.position
 		var hit_normal: Vector3 = result.normal
 		var hit_object: Node3D = result.collider as Node3D
 		var distance: float = ray_from.distance_to(result.position)
-		
-		_laser_impact.show_impact(beam_end, hit_normal, _current_brush_size)
-		
+
 		if hit_object.has_method("clean_at"):
 			var effectiveness := _calculate_effectiveness(distance)
 			var pressure := _get_pressure_multiplier()
 			hit_object.clean_at(result.position, hit_normal, laser_intensity, effectiveness, delta, _current_brush_size, pressure)
 			_start_contact()
-			_laser_particles.show_particles(beam_end, hit_normal)  # Add this
+			_show_particles(beam_end, hit_normal)
+			_laser_impact.set_firing(true)
 		else:
 			_stop_contact()
-			_laser_particles.hide_particles()  # Add this
-	
+			_hide_particles()
+			_laser_impact.set_firing(false)
+
 	_laser_beam.show_beam(global_position, beam_end)
 
 
@@ -169,7 +182,7 @@ func _calculate_effectiveness(distance: float) -> float:
 		return 0.0
 	if distance <= optimal_distance:
 		return 1.0
-	
+
 	var falloff_range: float = max_distance - optimal_distance
 	var distance_past_optimal: float = distance - optimal_distance
 	return 1.0 - (distance_past_optimal / falloff_range)
@@ -179,3 +192,13 @@ func _get_pressure_multiplier() -> float:
 	var size_range: float = max_brush_size - min_brush_size
 	var normalized: float = (_current_brush_size - min_brush_size) / size_range
 	return lerp(2.0, 0.5, normalized)
+
+
+func _hide_particles() -> void:
+	if _laser_particles and _laser_particles.has_method("hide_particles"):
+		_laser_particles.hide_particles()
+
+
+func _show_particles(pos: Vector3, normal: Vector3) -> void:
+	if _laser_particles and _laser_particles.has_method("show_particles"):
+		_laser_particles.show_particles(pos, normal)

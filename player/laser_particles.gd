@@ -57,7 +57,7 @@ func _update_sparks() -> void:
 	_sparks.amount = sparks_amount
 	_sparks.lifetime = sparks_lifetime
 	_sparks.explosiveness = 0.1
-	
+
 	var mat := ParticleProcessMaterial.new()
 	mat.direction = Vector3(0, 1, 0)
 	mat.spread = sparks_spread
@@ -66,23 +66,21 @@ func _update_sparks() -> void:
 	mat.gravity = Vector3(0, -12, 0)
 	mat.scale_min = sparks_size_min
 	mat.scale_max = sparks_size_max
-	
+
 	var gradient := Gradient.new()
 	gradient.set_color(0, sparks_color_start)
 	gradient.set_color(1, sparks_color_end)
 	var gradient_tex := GradientTexture1D.new()
 	gradient_tex.gradient = gradient
 	mat.color_ramp = gradient_tex
-	
+
 	_sparks.process_material = mat
-	
-	# Mesh
+
 	var mesh := SphereMesh.new()
 	mesh.radius = 0.02
 	mesh.height = 0.04
 	_sparks.draw_pass_1 = mesh
-	
-	# Glowing material
+
 	var mesh_mat := StandardMaterial3D.new()
 	mesh_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mesh_mat.albedo_color = sparks_color_start
@@ -97,7 +95,7 @@ func _update_debris() -> void:
 	_debris.amount = debris_amount
 	_debris.lifetime = debris_lifetime
 	_debris.explosiveness = 0.0
-	
+
 	var mat := ParticleProcessMaterial.new()
 	mat.direction = Vector3(0, 1, 0)
 	mat.spread = debris_spread
@@ -108,22 +106,20 @@ func _update_debris() -> void:
 	mat.scale_max = debris_size_max
 	mat.angular_velocity_min = -360.0
 	mat.angular_velocity_max = 360.0
-	
+
 	var gradient := Gradient.new()
 	gradient.set_color(0, debris_color_start)
 	gradient.set_color(1, debris_color_end)
 	var gradient_tex := GradientTexture1D.new()
 	gradient_tex.gradient = gradient
 	mat.color_ramp = gradient_tex
-	
+
 	_debris.process_material = mat
-	
-	# Flat flake mesh
+
 	var mesh := BoxMesh.new()
 	mesh.size = Vector3(0.03, 0.008, 0.03)
 	_debris.draw_pass_1 = mesh
-	
-	# Rust material
+
 	var mesh_mat := StandardMaterial3D.new()
 	mesh_mat.albedo_color = debris_color_start
 	mesh_mat.roughness = 1.0
@@ -133,7 +129,7 @@ func _update_debris() -> void:
 
 func show_particles(pos: Vector3, normal: Vector3) -> void:
 	global_position = pos
-	
+
 	if sparks_enabled:
 		var sparks_mat := _sparks.process_material as ParticleProcessMaterial
 		if sparks_mat:
@@ -141,7 +137,7 @@ func show_particles(pos: Vector3, normal: Vector3) -> void:
 		_sparks.global_position = pos
 		if not _sparks.emitting:
 			_sparks.emitting = true
-	
+
 	if debris_enabled:
 		var debris_mat := _debris.process_material as ParticleProcessMaterial
 		if debris_mat:
@@ -149,7 +145,7 @@ func show_particles(pos: Vector3, normal: Vector3) -> void:
 		_debris.global_position = pos
 		if not _debris.emitting:
 			_debris.emitting = true
-	
+
 	_is_active = true
 
 
@@ -160,7 +156,6 @@ func hide_particles() -> void:
 		_debris.emitting = false
 
 
-## Call this to apply Inspector changes at runtime
 func refresh() -> void:
 	_update_sparks()
 	_update_debris()

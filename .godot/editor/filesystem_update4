@@ -1,10 +1,9 @@
-res://main.tscn
+res://cleanable/car-2/car_2.tscn
 res://cleanable/dirt.gdshader
 res://gun/heat_distortion.gdshader
-res://autoloads/audio_manager.gd
-res://ui/progress_ui.gd
-res://game_flow.gd
-res://ui/pause_menu.gd
-res://player/player.gd
+res://gun/sprayer.gd
+res://player/laser_particles.gd
+res://ui/crosshair.tscn
+res://ui/crosshair.gd
+res://gun/laser_impact.gd
 res://cleanable/cleanable_mesh.gd
-res://cleanable/car-2/car_2.tscn

@@ -121,7 +121,7 @@ func clean_at(world_pos: Vector3, _normal: Vector3, intensity: float, effectiven
 	var pixel_y: int = int(uv.y * texture_size) % texture_size
 	var strength: float = laser_power * intensity * effectiveness * pressure * delta
 	
-	_paint_square(pixel_x, pixel_y, strength, brush_size)
+	_paint_circle(pixel_x, pixel_y, strength, brush_size)
 	_dirt_dirty = true
 
 
@@ -498,14 +498,21 @@ func _finalize_zones() -> void:
 # CLEANING
 # =============================================================================
 
-func _paint_square(cx: int, cy: int, strength: float, brush_size: int) -> void:
-	var half: int = brush_size / 2
+
+
+func _paint_circle(cx: int, cy: int, strength: float, brush_size: int) -> void:
+	var radius: float = brush_size / 2.0
+	var radius_sq: float = radius * radius
+	var half: int = int(ceil(radius))
 	
 	for y: int in range(cy - half, cy + half + 1):
 		for x: int in range(cx - half, cx + half + 1):
-			var px: int = posmod(x, texture_size)
-			var py: int = posmod(y, texture_size)
-			_clean_pixel(px, py, strength)
+			var dx: float = x - cx
+			var dy: float = y - cy
+			if dx * dx + dy * dy <= radius_sq:
+				var px: int = posmod(x, texture_size)
+				var py: int = posmod(y, texture_size)
+				_clean_pixel(px, py, strength)
 
 
 func _clean_pixel(px: int, py: int, strength: float) -> void:

@@ -1,4 +1,6 @@
-[gd_scene format=3]
+[gd_scene load_steps=2 format=3 uid="uid://05nsxj0gjhwf"]
+
+[ext_resource type="Script" uid="uid://bv5q4sfvr60vm" path="res://ui/crosshair.gd" id="1_1gxxw"]
 
 [node name="Crosshair" type="CenterContainer"]
 anchors_preset = 8
@@ -12,7 +14,9 @@ offset_right = 10.0
 offset_bottom = 10.0
 grow_horizontal = 2
 grow_vertical = 2
+script = ExtResource("1_1gxxw")
 
 [node name="Dot" type="ColorRect" parent="."]
 custom_minimum_size = Vector2(4, 4)
-color = Color(1, 1, 1, 0.8)
+layout_mode = 2
+color = Color(1, 1, 1, 0)
