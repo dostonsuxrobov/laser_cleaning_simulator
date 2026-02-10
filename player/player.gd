@@ -19,6 +19,7 @@ var _sitting_height: float = 0.9
 
 
 func _ready() -> void:
+	add_to_group("player")
 	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
 
@@ -34,9 +35,9 @@ func _physics_process(delta: float) -> void:
 	_handle_sit()
 	_handle_jump()
 	_handle_movement()
-	
+
 	move_and_slide()
-	
+
 	_update_states()
 
 
@@ -47,7 +48,7 @@ func _handle_gravity(delta: float) -> void:
 
 func _handle_sit() -> void:
 	var want_sit: bool = Input.is_action_pressed("sit") and is_on_floor()
-	
+
 	if want_sit and not is_sitting:
 		var shape: CapsuleShape3D = collision_shape.shape
 		shape.height = _sitting_height
@@ -71,11 +72,11 @@ func _handle_movement() -> void:
 	var input_dir := Vector2.ZERO
 	input_dir.x = Input.get_axis("move_left", "move_right")
 	input_dir.y = Input.get_axis("move_forward", "move_backward")
-	
+
 	move_direction = (transform.basis * Vector3(input_dir.x, 0, input_dir.y)).normalized()
-	
+
 	var speed: float = walk_speed * (0.5 if is_sitting else 1.0)
-	
+
 	if move_direction:
 		velocity.x = move_direction.x * speed
 		velocity.z = move_direction.z * speed

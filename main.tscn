@@ -1,7 +1,7 @@
 [gd_scene load_steps=10 format=3 uid="uid://bdgp2igqis1i1"]
 
 [ext_resource type="PackedScene" path="res://player/player.tscn" id="1_player"]
-[ext_resource type="PackedScene" path="res://ui/crosshair.tscn" id="4_crosshair"]
+[ext_resource type="PackedScene" uid="uid://05nsxj0gjhwf" path="res://ui/crosshair.tscn" id="4_crosshair"]
 [ext_resource type="PackedScene" uid="uid://dnnusigrbobql" path="res://cleanable/factory/factory.tscn" id="6_5vw27"]
 [ext_resource type="Script" uid="uid://bpnjkwjujhjrx" path="res://ui/progress_ui.gd" id="6_7mycd"]
 [ext_resource type="Script" uid="uid://0t88ui10hjqu" path="res://game_flow.gd" id="6_272bh"]
@@ -44,13 +44,21 @@ script = ExtResource("6_7mycd")
 
 [node name="GameFlow" type="Node" parent="."]
 script = ExtResource("6_272bh")
-replay_camera_path = NodePath("../ReplayCamera")
-
-[node name="ReplayCamera" type="Camera3D" parent="."]
-transform = Transform3D(0.7505957, 0, -0.66076183, 0, 1, 0, 0.66076183, 0, 0.7505957, -4.7754507, 4.223119, 2.4453225)
 
 [node name="factory" parent="." instance=ExtResource("6_5vw27")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -13.031669)
 
 [node name="car_2" parent="." instance=ExtResource("7_272bh")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -4.287864)
+
+[node name="back_right" type="Marker3D" parent="." groups=["replay_camera_point"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5.108305, 4.338458, -10.914804)
+
+[node name="front_right" type="Marker3D" parent="." groups=["replay_camera_point"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.5803146, 3.2144032, 0)
+
+[node name="back_left" type="Marker3D" parent="." groups=["replay_camera_point"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.1437883, 4.6771126, -8.489279)
+
+[node name="front_left" type="Marker3D" parent="." groups=["replay_camera_point"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3.0183222, 3.4737759, 2.031765)
