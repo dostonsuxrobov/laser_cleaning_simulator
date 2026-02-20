@@ -1,7 +1,4 @@
-res://main.tscn
+res://cleanable/robot_arm/robot_arm.tscn
 res://cleanable/dirt.gdshader
-res://gun/heat_distortion.gdshader
-res://autoloads/replay_recorder.gd
+res://cleanable/cleanable_mesh.gd
 res://game_flow.gd
-res://player/player.gd
-res://ui/job_complete_ui.gd

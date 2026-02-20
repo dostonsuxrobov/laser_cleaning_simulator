@@ -1,5 +1,6 @@
 shader_type spatial;
-render_mode blend_mix, depth_prepass_alpha, cull_disabled;
+render_mode cull_disabled;
+
 
 uniform sampler2D rust_albedo : source_color, filter_linear;
 uniform sampler2D rust_normal : hint_normal, filter_linear;
@@ -18,7 +19,6 @@ uniform sampler2D dirt_mask : hint_default_white, filter_linear;
 uniform sampler2D flash_mask : hint_default_black, filter_linear;
 uniform sampler2D zone_mask : hint_default_black, filter_linear;
 
-// Dirt vision
 uniform bool dirt_vision_enabled = false;
 uniform vec3 rust_glow_color : source_color = vec3(1.0, 0.3, 0.1);
 uniform vec3 metal_glow_color : source_color = vec3(0.3, 0.5, 1.0);
@@ -40,49 +40,57 @@ void fragment() {
 	vec3 metal_nrm = texture(metal_normal, UV).rgb;
 	vec3 chrome_nrm = texture(chrome_normal, UV).rgb;
 
+	// Normal surface compositing
 	vec3 albedo = chrome_col;
 	vec3 normal_map = chrome_nrm;
 	float roughness = chrome_roughness;
 	float metallic = chrome_metallic;
 
-	albedo = mix(albedo, metal_col, grey_amount);
-	normal_map = mix(normal_map, metal_nrm, grey_amount);
-	roughness = mix(roughness, metal_roughness, grey_amount);
-	metallic = mix(metallic, 0.0, grey_amount);
+	float metal_visible = grey_amount * (1.0 - rust_amount);
+
+	albedo = mix(albedo, metal_col, metal_visible);
+	normal_map = mix(normal_map, metal_nrm, metal_visible);
+	roughness = mix(roughness, metal_roughness, metal_visible);
+	metallic = mix(metallic, 0.0, metal_visible);
 
 	albedo = mix(albedo, rust_col, rust_amount);
 	normal_map = mix(normal_map, rust_nrm, rust_amount);
 	roughness = mix(roughness, rust_roughness, rust_amount);
 
-	// Per-zone flash from flash_mask texture
 	float flash = texture(flash_mask, UV).r;
 	vec3 emission = vec3(1.0) * flash * 3.0;
 
-	// Dirt vision mode
+	float alpha = 1.0;
+
 	if (dirt_vision_enabled) {
 		float in_zone = texture(zone_mask, UV).r;
 		float dirt_amount = max(rust_amount, grey_amount);
 
 		if (in_zone > 0.5 && dirt_amount > 0.01) {
+			// Dirty pixel inside a zone: glow and stay fully opaque
 			float pulse = pulse_min + (1.0 - pulse_min) * (0.5 + 0.5 * sin(TIME * pulse_speed));
 			vec3 glow_color = mix(metal_glow_color, rust_glow_color, step(0.01, rust_amount));
 			float boosted_dirt = pow(dirt_amount, 0.5);
 
 			emission += glow_color * boosted_dirt * dirt_glow_intensity * pulse;
 			albedo = glow_color * 0.5;
-			ALPHA = 1.0;
+			alpha = 1.0;
 		} else {
+			// Clean areas + outside zones: drop below scissor threshold = invisible
 			albedo = vec3(0.0);
 			emission = vec3(0.0);
-			ALPHA = outside_zone_alpha;
+			alpha = outside_zone_alpha;
 		}
-	} else {
-		ALPHA = 1.0;
 	}
+
+	// Flip normal for back faces so lighting is correct from behind
+	NORMAL = FRONT_FACING ? NORMAL : -NORMAL;
 
 	ALBEDO = albedo;
 	NORMAL_MAP = normal_map;
 	ROUGHNESS = roughness;
 	METALLIC = metallic;
 	EMISSION = emission;
+	ALPHA = alpha;
+	ALPHA_SCISSOR_THRESHOLD = 0.5;
 }

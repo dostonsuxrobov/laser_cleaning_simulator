@@ -5,19 +5,18 @@
 [ext_resource type="Script" uid="uid://drmfhngiqq285" path="res://gun/laser_beam.gd" id="3_qhldj"]
 [ext_resource type="Script" uid="uid://5o7ufvy360xk" path="res://gun/laser_impact.gd" id="4_fvq5x"]
 
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_1"]
-albedo_color = Color(0.15, 0.15, 0.18, 1)
+[sub_resource type="CylinderMesh" id="CylinderMesh_fvq5x"]
 
-[sub_resource type="BoxMesh" id="BoxMesh_body"]
-material = SubResource("StandardMaterial3D_1")
-size = Vector3(0.08, 0.12, 0.4)
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_22jee"]
+albedo_color = Color(0.021434637, 0.021434635, 0.021434633, 1)
 
 [node name="Gun" type="Node3D"]
 script = ExtResource("1_script")
 
 [node name="GunBody" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1.5360554, 0, 0, 0.07536885)
-mesh = SubResource("BoxMesh_body")
+transform = Transform3D(0.20395224, 0, 0, 0, -2.9096656e-08, 0.22201534, 0, -0.6656539, -9.704599e-09, 0, 0, 0.07536885)
+mesh = SubResource("CylinderMesh_fvq5x")
+surface_material_override/0 = SubResource("StandardMaterial3D_22jee")
 
 [node name="Sprayer" type="Node3D" parent="."]
 script = ExtResource("2_sprayer")
@@ -27,7 +26,8 @@ laser_intensity = 5.0
 script = ExtResource("3_qhldj")
 distortion_strength = 0.1
 visibility = 0.5
-wave_speed = 60.0
+wave_speed = 71.0
+wave_frequency = 55.0
 
 [node name="LaserImpact" type="Node3D" parent="Sprayer"]
 script = ExtResource("4_fvq5x")

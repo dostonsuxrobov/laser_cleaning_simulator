@@ -1,4 +1,4 @@
-[gd_scene load_steps=17 format=4 uid="uid://dnnusigrbobql"]
+[gd_scene load_steps=18 format=4 uid="uid://dnnusigrbobql"]
 
 [ext_resource type="Texture2D" uid="uid://5jrdxqc1u23q" path="res://cleanable/factory/factory_Polished_Concrete_New_baseColor.jpg" id="1_px3bh"]
 [ext_resource type="Texture2D" uid="uid://bsmafphwy01nh" path="res://cleanable/factory/factory_Brick_Antique_01_baseColor.jpg" id="2_xctg7"]
@@ -248,6 +248,9 @@ size = Vector3(17.564026, 8.178833, 0.40429688)
 [sub_resource type="BoxShape3D" id="BoxShape3D_gvo60"]
 size = Vector3(1, 7.3565063, 14.203064)
 
+[sub_resource type="BoxShape3D" id="BoxShape3D_g56eu"]
+size = Vector3(17.40451, 5.817505, 0.35095215)
+
 [node name="factory" type="StaticBody3D"]
 
 [node name="fatory" type="MeshInstance3D" parent="."]
@@ -269,3 +272,7 @@ shape = SubResource("BoxShape3D_kh8ut")
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8.627942, 3.5396423, 9.131873)
 shape = SubResource("BoxShape3D_gvo60")
+
+[node name="CollisionShape3D2" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.39408875, 2.4087524, 16.191845)
+shape = SubResource("BoxShape3D_g56eu")

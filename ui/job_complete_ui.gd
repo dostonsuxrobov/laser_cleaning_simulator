@@ -3,6 +3,7 @@ extends CanvasLayer
 
 const REPLAY_SPEED_MULTIPLIER: float = 3.0
 
+var _overlay: ColorRect
 var _replay_rect: TextureRect
 var _time_label: Label
 var _title_label: Label
@@ -17,10 +18,23 @@ var _is_replaying: bool = false
 var _replay_texture: ImageTexture
 var _replay_duration: float = 0.0
 var _actual_time: float = 0.0
+var _loop_tween: Tween
 
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_PREDELETE:
+		_cleanup()
+
+
+func _cleanup() -> void:
+	_is_replaying = false
+	if _loop_tween and _loop_tween.is_valid():
+		_loop_tween.kill()
+		_loop_tween = null
 
 
 func show_results(stats: Dictionary) -> void:
@@ -39,15 +53,17 @@ func show_results(stats: Dictionary) -> void:
 
 	_setup_ui(stats)
 
-	await get_tree().create_timer(0.5).timeout
-	_start_replay()
+	# Use tween instead of SceneTreeTimer — auto-freed with this node
+	var start_tween := create_tween()
+	start_tween.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+	start_tween.tween_callback(_start_replay).set_delay(0.5)
 
 
 func _setup_ui(stats: Dictionary) -> void:
-	var overlay := ColorRect.new()
-	overlay.color = Color(0.0, 0.0, 0.0, 0.9)
-	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(overlay)
+	_overlay = ColorRect.new()
+	_overlay.color = Color(0.0, 0.0, 0.0, 0.9)
+	_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(_overlay)
 
 	var margin := MarginContainer.new()
 	margin.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -55,7 +71,7 @@ func _setup_ui(stats: Dictionary) -> void:
 	margin.add_theme_constant_override("margin_right", 40)
 	margin.add_theme_constant_override("margin_top", 30)
 	margin.add_theme_constant_override("margin_bottom", 30)
-	add_child(margin)
+	_overlay.add_child(margin)
 
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 12)
@@ -215,8 +231,11 @@ func _process(delta: float) -> void:
 
 
 func _loop_replay() -> void:
-	await get_tree().create_timer(2.0).timeout
-	_start_replay()
+	if _loop_tween and _loop_tween.is_valid():
+		_loop_tween.kill()
+	_loop_tween = create_tween()
+	_loop_tween.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+	_loop_tween.tween_callback(_start_replay).set_delay(2.0)
 
 
 func _update_replay_display() -> void:
@@ -246,6 +265,7 @@ func _on_replay_pressed() -> void:
 
 
 func _on_restart_pressed() -> void:
+	_cleanup()
 	get_tree().paused = false
 	GameManager.restart_job()
 

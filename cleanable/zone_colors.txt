@@ -1,0 +1,49 @@
+Use pure, saturated colors only
+Stick to colors where each channel is either 0 or 255. These have maximum distance from each other:
+
+These 8 give you plenty of zones. If you need more, you can add things like (128, 255, 0) or (255, 0, 128) — just keep channels at 0, 128, or 255.
+Paint with hard edges, no anti-aliasing
+This is the single biggest thing. In your image editor:
+
+Color	RGB		Hex
+Red	(255, 0, 0)	ff0000
+Green	(0, 255, 0)	00ff00
+Blue	(0, 0, 255)	0000ff
+Yellow	(255, 255, 0)	ffff00
+Cyan	(0, 255, 255)	00ffff
+Magenta	(255, 0, 255)	ff00ff
+Orange	(255, 128, 0)	ff8000
+Purple	(128, 0, 255)	8000ff
+
+
+Turn off anti-aliasing on every tool (brush, fill, selection)
+Use pencil tool instead of brush tool — pencil has no soft edges
+Use nearest neighbor interpolation if you resize
+Never use blur, feather, or soft selection edges
+Export as PNG — never JPG. JPG compression blends colors at every edge and creates thousands of in-between values
+
+Use pure black for empty space
+Background must be (0, 0, 0). The script skips any pixel where all channels are below 0.05. Don't use dark grey or near-black — use exactly black.
+Fill large areas, avoid thin lines
+Zones need enough pixels to survive the min_zone_pixels filter (default 100). A 1-pixel-wide line across a 256×256 texture is only 256 pixels — that works, but a small dot might not. Thick solid fills are ideal.
+Leave a 1-2 pixel black gap between zones
+Instead of letting two colors touch directly, leave a thin black border between them. This prevents any blending at boundaries even if your editor sneaks in anti-aliasing somewhere. Those black gap pixels get skipped entirely.
+Recommended workflow
+
+Create a new image at exactly your texture_size (256×256, 512×512, etc.)
+Fill entire image with black
+Use pencil/hard brush with anti-aliasing OFF
+Paint each zone as a solid flat fill of one pure color
+Leave 1-2px black gaps between adjacent zones
+Save as PNG (not JPG, not WebP)
+Import into Godot with no mipmaps and compression set to Lossless
+
+Godot import settings
+In the Godot import tab for your zone map texture, set:
+
+Compress Mode → Lossless
+Mipmaps → Off
+Filter → Nearest (not Linear)
+
+Linear filtering and lossy compression both blend pixel colors, which is exactly what creates phantom zones.
+If you follow these rules, the discovery system will find exactly the number of colors you painted — no more, no fewer.

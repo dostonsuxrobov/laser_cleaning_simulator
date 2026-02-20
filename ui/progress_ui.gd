@@ -40,6 +40,8 @@ func _ready() -> void:
 	_find_sprayer()
 	_find_cleanable()
 	GameManager.job_completed.connect(_on_job_completed)
+	
+
 
 
 func _on_job_completed(_stats: Dictionary) -> void:
@@ -136,8 +138,9 @@ func _draw_arc_ring(center: Vector2, radius: float, start_pct: float, end_pct: f
 
 func _find_sprayer() -> void:
 	await get_tree().process_frame
-	_sprayer = _find_node_with_signal(get_tree().root, "target_changed")
-	if _sprayer:
+	var sprayers := get_tree().get_nodes_in_group("sprayer")
+	if sprayers.size() > 0:
+		_sprayer = sprayers[0] as Node3D
 		_sprayer.target_changed.connect(_on_target_changed)
 		_sprayer.target_lost.connect(_on_target_lost)
 

@@ -282,6 +282,16 @@ func _create_button(text: String, callback: Callable, bg_color: Color) -> Button
 	btn.add_theme_color_override("font_hover_color", Color(1.0, 1.0, 1.0))
 	
 	return btn
+	
+	
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_PREDELETE:
+		if _overlay:
+			_overlay.queue_free()
+			_overlay = null
+		if _panel:
+			_panel.queue_free()
+			_panel = null
 
 
 func _on_continue() -> void:

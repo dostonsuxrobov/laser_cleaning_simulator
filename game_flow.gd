@@ -7,48 +7,76 @@ extends Node
 var _cleanable: Node3D
 var _complete_ui: CanvasLayer
 var _pause_menu: CanvasLayer
+var _initialized: bool = false
 
-const MAX_WAIT_FRAMES: int = 10
+const POLL_INTERVAL: float = 0.5
+const MAX_POLL_TIME: float = 30.0
+var _poll_elapsed: float = 0.0
 
 
 func _ready() -> void:
-	_wait_for_cleanable()
+	_setup_pause_menu()
+	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
-
-func _wait_for_cleanable(attempts: int = 0) -> void:
 	if cleanable_path:
 		_cleanable = get_node_or_null(cleanable_path)
 
-	if not _cleanable:
-		_cleanable = _find_cleanable()
+	if _cleanable:
+		_initialize()
+	else:
+		set_process(true)
+
+
+func _process(delta: float) -> void:
+	if _initialized:
+		set_process(false)
+		return
+
+	_poll_elapsed += delta
+
+	_cleanable = _find_cleanable()
 
 	if _cleanable:
 		_initialize()
+		set_process(false)
 		return
 
-	if attempts >= MAX_WAIT_FRAMES:
-		push_error("Cleanable not found after %d frames!" % MAX_WAIT_FRAMES)
-		return
-
-	await get_tree().process_frame
-	_wait_for_cleanable(attempts + 1)
+	if _poll_elapsed >= MAX_POLL_TIME:
+		push_warning("No cleanable found after %.0fs — running without one." % MAX_POLL_TIME)
+		_initialize_without_cleanable()
+		set_process(false)
 
 
 func _initialize() -> void:
+	if _initialized:
+		return
+	_initialized = true
+
 	var player := _find_player()
 	var markers := _find_camera_markers()
 	ReplayRecorder.setup(_cleanable, player, markers)
 
 	GameManager.set_job(_cleanable, job_name)
 	GameManager.job_completed.connect(_on_job_completed)
+	GameManager.start_job()
 
+
+func _initialize_without_cleanable() -> void:
+	if _initialized:
+		return
+	_initialized = true
+
+	var player := _find_player()
+	GameManager.set_job(null, job_name)
+	GameManager.job_completed.connect(_on_job_completed)
+	GameManager.start_job()
+
+
+func _setup_pause_menu() -> void:
 	var pause_script := preload("res://ui/pause_menu.gd")
 	_pause_menu = CanvasLayer.new()
 	_pause_menu.set_script(pause_script)
 	add_child(_pause_menu)
-
-	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
-	GameManager.start_job()
 
 
 func _find_cleanable() -> Node3D:
@@ -74,6 +102,10 @@ func _find_camera_markers() -> Array[Marker3D]:
 
 
 func _on_job_completed(stats: Dictionary) -> void:
+	# Clean remaining dirt (matters for ESC shortcut path where zones aren't all individually done)
+	if _cleanable and _cleanable.has_method("clean_all"):
+		_cleanable.clean_all()
+		await RenderingServer.frame_post_draw
 	_show_complete(stats)
 
 

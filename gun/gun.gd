@@ -26,13 +26,13 @@ func _ready() -> void:
 
 
 func _find_player() -> void:
-	# Walk up the tree to find player
-	var node := get_parent()
-	while node:
-		if node is CharacterBody3D:
-			_player = node
-			return
-		node = node.get_parent()
+	# Wait one frame for player to register in group
+	await get_tree().process_frame
+	var players := get_tree().get_nodes_in_group("player")
+	if players.size() > 0:
+		_player = players[0] as CharacterBody3D
+	else:
+		push_warning("Gun: no node in 'player' group found")
 
 
 func _process(delta: float) -> void:
