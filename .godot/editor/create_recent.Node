@@ -1,8 +1,0 @@
-CollisionShape3D
-MeshInstance3D
-Node3D
-StaticBody3D
-Marker3D
-Camera3D
-Node
-CanvasLayer
