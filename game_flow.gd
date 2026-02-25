@@ -59,6 +59,7 @@ func _initialize() -> void:
 	GameManager.set_job(_cleanable, job_name)
 	GameManager.job_completed.connect(_on_job_completed)
 	GameManager.start_job()
+	_setup_hint_system() 
 
 
 func _initialize_without_cleanable() -> void:
@@ -115,3 +116,10 @@ func _show_complete(stats: Dictionary) -> void:
 	_complete_ui.set_script(complete_script)
 	add_child(_complete_ui)
 	_complete_ui.show_results(stats)
+
+# Add this new method
+func _setup_hint_system() -> void:
+	var hint_script := preload("res://ui/hint_system.gd")
+	var hints := CanvasLayer.new()
+	hints.set_script(hint_script)
+	add_child(hints)

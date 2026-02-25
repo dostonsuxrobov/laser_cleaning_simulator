@@ -1,4 +1,4 @@
-res://cleanable/robot_arm/robot_arm.tscn
+res://cleanable/factory/factory.tscn
 res://cleanable/dirt.gdshader
-res://cleanable/cleanable_mesh.gd
+res://ui/hint_system.gd
 res://game_flow.gd
