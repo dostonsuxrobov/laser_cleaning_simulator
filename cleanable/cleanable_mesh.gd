@@ -1,7 +1,15 @@
 extends StaticBody3D
-## Cleanable Mesh - GPU painting with zone-based completion.
+## Cleanable Mesh - world-space GPU painting with zone-based completion.
 ## Supports both simple meshes (direct child) and armature models (multiple meshes).
 ## Job: own the dirt texture, track zones, trigger victory when all zones clean.
+##
+## How cleaning works:
+##  1. At load, a worker thread rasterizes every face into UV space, producing a
+##     per-texel map of body-local surface positions + normals (SurfaceBaker).
+##  2. Each laser hit runs a brush pass over the dirt mask: a texel is cleaned
+##     only if its baked 3D position lies within the brush's world-space radius
+##     of the hit point (and it faces the beam). What you aim at is what cleans.
+## This is independent of UV layout, texel density, and island boundaries.
 
 # =============================================================================
 # SIGNALS
@@ -18,7 +26,12 @@ signal object_completed
 @export var surface_index: int = 0
 
 @export_group("Texture")
+## Resolution of zone bookkeeping, progress tracking and the flash overlay.
 @export var texture_size: int = 256
+## Resolution of the dirt mask + baked surface maps. Higher = finer brush edges.
+@export var paint_size: int = 512
+## How far (in paint texels) surface data grows past UV island edges.
+@export_range(2, 16) var dilate_radius: int = 8
 @export var zone_map: Texture2D
 
 @export_group("Zone Names")
@@ -65,13 +78,31 @@ var _mesh_instances: Array[MeshInstance3D] = []
 var _zones: Dictionary = {}
 var _zone_auto_names: Dictionary = {}
 var _pixel_to_zone: Dictionary = {}
+var _totals_initialized: bool = false
 
-# Spatial grid for fast UV lookup from world position
+# Baked surface data (world-space brush)
+var _bake_faces: PackedFloat32Array
+var _bake_thread: Thread
+var _bake_ready: bool = false
+var _position_texture: ImageTexture
+var _normal_texture: ImageTexture
+var _position_image: Image  # kept for diagnostics/tests
+var _normal_image: Image
+var _coverage: PackedByteArray  # texture_size grid, 1 = surface behind this texel
+
+# Brush sweep state (continuous strokes between physics frames)
+var _prev_paint_pos: Vector3 = Vector3.ZERO
+var _last_paint_ms: int = -100000
+
+# Spatial grid for fast UV lookup from world position (zone display / dirt checks)
 var _face_grid: Dictionary = {}
 var _face_cache: Array[Dictionary] = []
 var _grid_cell_size: float = 1.0
 
 const PROGRESS_INTERVAL: float = 0.3
+const STROKE_GAP_MS: int = 200
+const MAX_SWEEP_RADII: float = 10.0
+const FACE_TIE_EPS: float = 0.003
 
 # =============================================================================
 # LIFECYCLE
@@ -91,8 +122,17 @@ func _ready() -> void:
 	_setup_textures()
 	_setup_zones()
 
+	# Visual dirt appears immediately; brush activates when the bake finishes.
+	_fill_zone_dirt()
+	_start_bake()
+
 	if has_node("/root/DirtVision"):
 		get_node("/root/DirtVision").dirt_vision_changed.connect(_on_dirt_vision_changed)
+
+
+func _exit_tree() -> void:
+	if _bake_thread and _bake_thread.is_started():
+		_bake_thread.wait_to_finish()
 
 
 func _process(delta: float) -> void:
@@ -110,24 +150,38 @@ func _process(delta: float) -> void:
 # PUBLIC API — called by sprayer and game systems
 # =============================================================================
 
-## Paint dirt away at a world position. Called every frame by the sprayer.
-func clean_at(world_pos: Vector3, _normal: Vector3, intensity: float, effectiveness: float, delta: float, brush_size: int = 8, pressure: float = 1.0) -> void:
-	if effectiveness <= 0.0:
+## Paint dirt away around a world position. Called every physics frame by the
+## sprayer. brush_radius is in WORLD units - the cleaned spot always matches
+## the aiming ring, on every part of the model.
+func clean_at(world_pos: Vector3, beam_dir: Vector3, intensity: float, effectiveness: float, delta: float, brush_radius: float = 0.075, pressure: float = 1.0) -> void:
+	if not _bake_ready or effectiveness <= 0.0:
 		return
 
 	var local_pos: Vector3 = to_local(world_pos)
-	var uv: Vector2 = _find_uv_at_position(local_pos)
-	if uv.x < 0:
-		return
+	var inv_basis: Basis = global_transform.basis.inverse()
+	var local_dir: Vector3 = (inv_basis * beam_dir).normalized()
+
+	var s: Vector3 = global_transform.basis.get_scale()
+	var scale_avg: float = maxf((s.x + s.y + s.z) / 3.0, 0.0001)
+	var local_radius: float = brush_radius / scale_avg
+
+	# Sweep from last frame's hit for gap-free strokes; jump if too far apart.
+	var now: int = Time.get_ticks_msec()
+	var from: Vector3 = local_pos
+	if now - _last_paint_ms <= STROKE_GAP_MS \
+			and _prev_paint_pos.distance_to(local_pos) <= local_radius * MAX_SWEEP_RADII:
+		from = _prev_paint_pos
+	_prev_paint_pos = local_pos
+	_last_paint_ms = now
 
 	var strength: float = laser_power * intensity * effectiveness * pressure * delta
-	_paint_viewport.stamp(uv, brush_size, strength)
+	_paint_viewport.paint_world(from, local_pos, local_radius, local_dir, strength)
 	_paint_dirty = true
 
 
 ## Instantly clear all dirt. Used by ESC-shortcut win path.
 func clean_all() -> void:
-	_paint_viewport.clear_all()
+	_paint_viewport.fill_black()
 
 	var black_img := Image.create(texture_size, texture_size, false, Image.FORMAT_RGBA8)
 	black_img.fill(Color(0, 0, 0, 1))
@@ -149,14 +203,14 @@ func clean_all() -> void:
 
 
 ## Returns zone info at a world position. Used by sprayer for UI display.
-func get_zone_at_position(world_pos: Vector3) -> Dictionary:
-	var local_pos: Vector3 = to_local(world_pos)
-	var uv: Vector2 = _find_uv_at_position(local_pos)
+## Pass the raycast normal to disambiguate thin double-sided geometry.
+func get_zone_at_position(world_pos: Vector3, world_normal: Vector3 = Vector3.ZERO) -> Dictionary:
+	var uv: Vector2 = _uv_from_world(world_pos, world_normal)
 	if uv.x < 0:
 		return {}
 
-	var pixel_x: int = int(uv.x * texture_size) % texture_size
-	var pixel_y: int = int(uv.y * texture_size) % texture_size
+	var pixel_x: int = clampi(int(uv.x * texture_size), 0, texture_size - 1)
+	var pixel_y: int = clampi(int(uv.y * texture_size), 0, texture_size - 1)
 	var pixel_key: int = pixel_x + pixel_y * texture_size
 
 	if not _pixel_to_zone.has(pixel_key):
@@ -176,9 +230,8 @@ func get_zone_at_position(world_pos: Vector3) -> Dictionary:
 
 
 ## Returns true if there's still dirt at a world position. Used by crosshair.
-func has_dirt_at(world_pos: Vector3) -> bool:
-	var local_pos: Vector3 = to_local(world_pos)
-	var uv: Vector2 = _find_uv_at_position(local_pos)
+func has_dirt_at(world_pos: Vector3, world_normal: Vector3 = Vector3.ZERO) -> bool:
+	var uv: Vector2 = _uv_from_world(world_pos, world_normal)
 	if uv.x < 0:
 		return false
 	if not _last_snapshot:
@@ -237,7 +290,7 @@ func get_dirt_image() -> Image:
 
 func set_dirt_image(img: Image) -> void:
 	if img:
-		_paint_viewport.restore_state(img)
+		_paint_viewport.draw_image(img, true)
 		_paint_dirty = true
 
 # =============================================================================
@@ -285,18 +338,20 @@ func _setup_paint_viewport() -> void:
 	_paint_viewport = Node.new()
 	_paint_viewport.set_script(script)
 	add_child(_paint_viewport)
-	_paint_viewport.setup(texture_size, rust_resistance, metal_resistance)
+	_paint_viewport.setup(paint_size, rust_resistance, metal_resistance)
 
 
 func _setup_mesh_data() -> void:
 	_face_cache.clear()
 	_face_grid.clear()
+	_bake_faces = PackedFloat32Array()
 
 	var mesh_min := Vector3(INF, INF, INF)
 	var mesh_max := Vector3(-INF, -INF, -INF)
+	var inv_basis: Basis = global_transform.basis.inverse()
 
-	# Collect faces from ALL mesh instances into one unified grid
-	# All vertices transformed to StaticBody3D local space
+	# Collect faces from ALL mesh instances into one unified grid.
+	# All vertices transformed to StaticBody3D local space.
 	for mesh_instance: MeshInstance3D in _mesh_instances:
 		var mesh: Mesh = mesh_instance.mesh
 		if not mesh:
@@ -317,6 +372,8 @@ func _setup_mesh_data() -> void:
 		if mdt.create_from_surface(array_mesh, si) != OK:
 			continue
 
+		var normal_basis: Basis = inv_basis * mesh_instance.global_transform.basis
+
 		for face_idx: int in range(mdt.get_face_count()):
 			var v0_idx: int = mdt.get_face_vertex(face_idx, 0)
 			var v1_idx: int = mdt.get_face_vertex(face_idx, 1)
@@ -326,12 +383,25 @@ func _setup_mesh_data() -> void:
 			var v1: Vector3 = to_local(mesh_instance.to_global(mdt.get_vertex(v1_idx)))
 			var v2: Vector3 = to_local(mesh_instance.to_global(mdt.get_vertex(v2_idx)))
 
+			var n0: Vector3 = (normal_basis * mdt.get_vertex_normal(v0_idx)).normalized()
+			var n1: Vector3 = (normal_basis * mdt.get_vertex_normal(v1_idx)).normalized()
+			var n2: Vector3 = (normal_basis * mdt.get_vertex_normal(v2_idx)).normalized()
+
+			var uv0: Vector2 = mdt.get_vertex_uv(v0_idx)
+			var uv1: Vector2 = mdt.get_vertex_uv(v1_idx)
+			var uv2: Vector2 = mdt.get_vertex_uv(v2_idx)
+
 			_face_cache.append({
 				"v0": v0, "v1": v1, "v2": v2,
-				"uv0": mdt.get_vertex_uv(v0_idx),
-				"uv1": mdt.get_vertex_uv(v1_idx),
-				"uv2": mdt.get_vertex_uv(v2_idx)
+				"uv0": uv0, "uv1": uv1, "uv2": uv2
 			})
+
+			# Flat layout for the threaded baker: 9 pos + 9 normal + 6 uv floats
+			_bake_faces.append_array(PackedFloat32Array([
+				v0.x, v0.y, v0.z, v1.x, v1.y, v1.z, v2.x, v2.y, v2.z,
+				n0.x, n0.y, n0.z, n1.x, n1.y, n1.z, n2.x, n2.y, n2.z,
+				uv0.x, uv0.y, uv1.x, uv1.y, uv2.x, uv2.y
+			]))
 
 			for v: Vector3 in [v0, v1, v2]:
 				mesh_min = Vector3(min(mesh_min.x, v.x), min(mesh_min.y, v.y), min(mesh_min.z, v.z))
@@ -356,19 +426,8 @@ func _add_face_to_grid_cells(face_idx: int, v0: Vector3, v1: Vector3, v2: Vector
 	var min_cell := Vector3i(int(floor(min_pos.x / _grid_cell_size)), int(floor(min_pos.y / _grid_cell_size)), int(floor(min_pos.z / _grid_cell_size)))
 	var max_cell := Vector3i(int(floor(max_pos.x / _grid_cell_size)), int(floor(max_pos.y / _grid_cell_size)), int(floor(max_pos.z / _grid_cell_size)))
 
-	# Cap very large triangles to avoid filling hundreds of cells
-	var span: Vector3i = max_cell - min_cell + Vector3i.ONE
-	if span.x * span.y * span.z > 64:
-		var center_cell: Vector3i = (min_cell + max_cell) / 2
-		for dx: int in [-1, 0, 1]:
-			for dy: int in [-1, 0, 1]:
-				for dz: int in [-1, 0, 1]:
-					var key: Vector3i = center_cell + Vector3i(dx, dy, dz)
-					if not _face_grid.has(key):
-						_face_grid[key] = []
-					_face_grid[key].append(face_idx)
-		return
-
+	# Register the face in EVERY cell its bbox spans. Collapsing large faces to a
+	# block around their center makes edge/corner hits unfindable - never do that.
 	for x: int in range(min_cell.x, max_cell.x + 1):
 		for y: int in range(min_cell.y, max_cell.y + 1):
 			for z: int in range(min_cell.z, max_cell.z + 1):
@@ -408,6 +467,115 @@ func _setup_textures() -> void:
 			mat.set_shader_parameter("flash_mask", _flash_texture)
 			mat.set_shader_parameter("zone_mask", _zone_mask_texture)
 			_materials.append(mat)
+
+# =============================================================================
+# SURFACE BAKE — threaded position/normal map rasterization
+# =============================================================================
+
+func _start_bake() -> void:
+	if _bake_faces.is_empty():
+		return
+	_bake_thread = Thread.new()
+	_bake_thread.start(_bake_worker)
+
+
+func _bake_worker() -> void:
+	var result: Dictionary = SurfaceBaker.bake(_bake_faces, paint_size, dilate_radius)
+	call_deferred("_on_bake_done", result)
+
+
+func _on_bake_done(result: Dictionary) -> void:
+	if _bake_thread:
+		_bake_thread.wait_to_finish()
+		_bake_thread = null
+
+	var pos_img := Image.create_from_data(
+		paint_size, paint_size, false, Image.FORMAT_RGBAF, result["position"].to_byte_array()
+	)
+	var nrm_img := Image.create_from_data(
+		paint_size, paint_size, false, Image.FORMAT_RGBAF, result["normal"].to_byte_array()
+	)
+	_position_image = pos_img
+	_normal_image = nrm_img
+	_position_texture = ImageTexture.create_from_image(pos_img)
+	_normal_texture = ImageTexture.create_from_image(nrm_img)
+	_paint_viewport.set_surface_maps(_position_texture, _normal_texture)
+
+	_coverage = _downsample_coverage(result["coverage"])
+	_apply_coverage_to_zones()
+	_build_zone_mask()
+
+	# Replace the provisional fill with the coverage-corrected one, then measure
+	# the true initial dirt so completion thresholds are always reachable.
+	_fill_zone_dirt()
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+	_recalculate_progress()
+	_bake_ready = true
+
+
+## paint_size coverage → texture_size grid. A cell counts as covered if ANY of
+## its sub-texels has surface data behind it.
+func _downsample_coverage(cov: PackedByteArray) -> PackedByteArray:
+	var out := PackedByteArray()
+	out.resize(texture_size * texture_size)
+	out.fill(0)
+	var ratio: int = maxi(paint_size / texture_size, 1)
+
+	for y: int in range(texture_size):
+		for x: int in range(texture_size):
+			var covered: bool = false
+			for sy: int in range(ratio):
+				var row: int = (y * ratio + sy) * paint_size
+				for sx: int in range(ratio):
+					if cov[row + x * ratio + sx] != 0:
+						covered = true
+						break
+				if covered:
+					break
+			if covered:
+				out[x + y * texture_size] = 1
+	return out
+
+
+## Drop zone pixels that have no surface behind them - the brush can never
+## reach those, and counting them would make zones impossible to complete.
+func _apply_coverage_to_zones() -> void:
+	var removed_zones: Array[String] = []
+
+	for zone_key: String in _zones:
+		var zone: Dictionary = _zones[zone_key]
+		var kept: Array = []
+		var pidx := PackedInt32Array()
+		var sum_x: int = 0
+		var sum_y: int = 0
+
+		for pixel: Vector2i in zone["pixels"]:
+			var key: int = pixel.x + pixel.y * texture_size
+			if _coverage[key] != 0:
+				kept.append(pixel)
+				pidx.append(key)
+				sum_x += pixel.x
+				sum_y += pixel.y
+			else:
+				_pixel_to_zone.erase(key)
+
+		if kept.size() < min_zone_pixels:
+			for pixel: Vector2i in kept:
+				_pixel_to_zone.erase(pixel.x + pixel.y * texture_size)
+			removed_zones.append(zone_key)
+			continue
+
+		zone["pixels"] = kept
+		zone["pidx"] = pidx
+		zone["total"] = kept.size()
+		zone["center_uv"] = Vector2(
+			sum_x / float(kept.size()) / texture_size,
+			sum_y / float(kept.size()) / texture_size
+		)
+
+	for zone_key: String in removed_zones:
+		_zones.erase(zone_key)
 
 # =============================================================================
 # ZONE DISCOVERY — auto-detect colored regions from zone map
@@ -487,9 +655,6 @@ func _setup_zones() -> void:
 	_finalize_zones()
 	_build_zone_mask()
 
-	# Paint dirt only where zones exist
-	_paint_viewport.fill_zone_dirt(_pixel_to_zone, texture_size)
-
 
 func _discover_zone_colors() -> Array[Color]:
 	var seed_colors: Array[Color] = []
@@ -532,11 +697,21 @@ func _build_zone_mask() -> void:
 		mat.set_shader_parameter("zone_mask", _zone_mask_texture)
 
 
+## Paint dirt on every zone pixel (upscaled to paint resolution).
+func _fill_zone_dirt() -> void:
+	var img := Image.create(texture_size, texture_size, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 1))
+	for pixel_key: int in _pixel_to_zone:
+		@warning_ignore("integer_division")
+		img.set_pixel(pixel_key % texture_size, pixel_key / texture_size, Color(1, 1, 0, 1))
+	_paint_viewport.draw_image(img, true)
+
+
 func _add_pixel_to_zone(zone_key: String, x: int, y: int) -> void:
 	if not _zones.has(zone_key):
 		_zones[zone_key] = {
 			"color": _hex_to_color(zone_key), "total": 0, "completed": false,
-			"pixels": [], "sum_x": 0, "sum_y": 0,
+			"pixels": [], "pidx": PackedInt32Array(), "sum_x": 0, "sum_y": 0,
 			"rust_total": 0.0, "rust_remaining": 0.0,
 			"metal_total": 0.0, "metal_remaining": 0.0
 		}
@@ -544,6 +719,7 @@ func _add_pixel_to_zone(zone_key: String, x: int, y: int) -> void:
 	var zone: Dictionary = _zones[zone_key]
 	zone["total"] += 1
 	zone["pixels"].append(Vector2i(x, y))
+	zone["pidx"].append(x + y * texture_size)
 	zone["sum_x"] += x
 	zone["sum_y"] += y
 	zone["rust_total"] += 1.0
@@ -573,8 +749,11 @@ func _recalculate_progress() -> void:
 	if not snapshot:
 		return
 
-	_last_snapshot = snapshot
 	snapshot.convert(Image.FORMAT_RGBA8)
+	if snapshot.get_size() != Vector2i(texture_size, texture_size):
+		snapshot.resize(texture_size, texture_size, Image.INTERPOLATE_BILINEAR)
+	_last_snapshot = snapshot
+
 	var data: PackedByteArray = snapshot.get_data()
 	var stride: int = 4
 
@@ -585,14 +764,26 @@ func _recalculate_progress() -> void:
 
 		var rust_sum: float = 0.0
 		var metal_sum: float = 0.0
-		for pixel: Vector2i in zone["pixels"]:
-			var idx: int = (pixel.y * texture_size + pixel.x) * stride
-			rust_sum += data[idx] / 255.0
-			metal_sum += data[idx + 1] / 255.0
+		for pixel_key: int in zone["pidx"]:
+			var idx: int = pixel_key * stride
+			rust_sum += data[idx]
+			metal_sum += data[idx + 1]
+		rust_sum /= 255.0
+		metal_sum /= 255.0
 
-		zone["rust_remaining"] = rust_sum
-		zone["metal_remaining"] = metal_sum
-		_check_zone_completion(zone_key)
+		if not _totals_initialized:
+			# First measurement after the corrected fill = ground truth for 100% dirty
+			zone["rust_total"] = maxf(rust_sum, 0.001)
+			zone["metal_total"] = maxf(metal_sum, 0.001)
+			zone["rust_remaining"] = rust_sum
+			zone["metal_remaining"] = metal_sum
+		else:
+			zone["rust_remaining"] = rust_sum
+			zone["metal_remaining"] = metal_sum
+			_check_zone_completion(zone_key)
+
+	if not _totals_initialized:
+		_totals_initialized = true
 
 # =============================================================================
 # ZONE COMPLETION — triggers flash, ding, and eventually victory
@@ -619,7 +810,12 @@ func _complete_zone(zone_key: String) -> void:
 	zone["rust_remaining"] = 0.0
 	zone["metal_remaining"] = 0.0
 
-	_paint_viewport.clear_zone(zone["pixels"], texture_size)
+	# Wipe the zone's remaining dirt speckles
+	var img := Image.create(texture_size, texture_size, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	for pixel: Vector2i in zone["pixels"]:
+		img.set_pixel(pixel.x, pixel.y, Color(0, 0, 0, 1))
+	_paint_viewport.draw_image(img)
 
 	for pixel: Vector2i in zone["pixels"]:
 		_flash_data[pixel.x + pixel.y * texture_size] = 255
@@ -685,14 +881,25 @@ func _fade_flash(delta: float) -> void:
 
 # =============================================================================
 # UV LOOKUP — world position → UV via spatial grid + barycentric coords
+# (used for zone display and dirt checks; painting no longer depends on this)
 # =============================================================================
 
-func _find_uv_at_position(local_pos: Vector3) -> Vector2:
+func _uv_from_world(world_pos: Vector3, world_normal: Vector3 = Vector3.ZERO) -> Vector2:
+	var local_pos: Vector3 = to_local(world_pos)
+	var local_normal: Vector3 = Vector3.ZERO
+	if world_normal != Vector3.ZERO:
+		local_normal = (global_transform.basis.inverse() * world_normal).normalized()
+	return _find_uv_at_position(local_pos, local_normal)
+
+
+func _find_uv_at_position(local_pos: Vector3, hint_normal: Vector3 = Vector3.ZERO) -> Vector2:
 	if _face_cache.is_empty():
 		return Vector2(-1, -1)
 
 	var closest_uv: Vector2 = Vector2(-1, -1)
 	var closest_dist: float = INF
+	var closest_dot: float = -2.0
+	var use_hint: bool = hint_normal != Vector3.ZERO
 
 	var cx: int = int(floor(local_pos.x / _grid_cell_size))
 	var cy: int = int(floor(local_pos.y / _grid_cell_size))
@@ -719,8 +926,23 @@ func _find_uv_at_position(local_pos: Vector3) -> Vector2:
 			var face: Dictionary = _face_cache[face_idx]
 			var closest_on_tri: Vector3 = _closest_point_on_triangle(local_pos, face.v0, face.v1, face.v2)
 			var dist: float = local_pos.distance_to(closest_on_tri)
-			if dist < closest_dist:
+
+			# Among near-tied faces (thin walls, coplanar seams), prefer the one
+			# whose facing matches the raycast normal. Godot winds front faces
+			# clockwise, so the OUTWARD normal is cross(v2-v0, v1-v0).
+			var face_dot: float = 0.0
+			if use_hint:
+				var fn: Vector3 = (face.v2 - face.v0).cross(face.v1 - face.v0)
+				if fn.length_squared() > 1e-12:
+					face_dot = fn.normalized().dot(hint_normal)
+
+			var better: bool = dist < closest_dist - FACE_TIE_EPS
+			if not better and use_hint and dist < closest_dist + FACE_TIE_EPS and face_dot > closest_dot:
+				better = true
+
+			if better:
 				closest_dist = dist
+				closest_dot = face_dot
 				var bary: Vector3 = _barycentric(closest_on_tri, face.v0, face.v1, face.v2)
 				closest_uv = face.uv0 * bary.x + face.uv1 * bary.y + face.uv2 * bary.z
 

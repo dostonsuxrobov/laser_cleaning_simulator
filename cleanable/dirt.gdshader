@@ -28,7 +28,9 @@ uniform float pulse_min : hint_range(0.0, 1.0) = 0.4;
 uniform float outside_zone_alpha : hint_range(0.0, 0.2) = 0.05;
 
 void fragment() {
-	vec2 mask = texture(dirt_mask, UV).rg;
+	// Clamp: the paint target is float (HDR) and subtractive blending can
+	// push values slightly below zero on heavily cleaned texels.
+	vec2 mask = clamp(texture(dirt_mask, UV).rg, vec2(0.0), vec2(1.0));
 	float rust_amount = mask.r;
 	float grey_amount = mask.g;
 

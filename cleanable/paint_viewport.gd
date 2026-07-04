@@ -1,19 +1,21 @@
 extends Node
-## Manages a SubViewport for GPU-based texture painting.
-## Single responsibility: stamp brush at UV coordinates, expose the result.
+## Manages a SubViewport for GPU-based dirt painting.
+## Single responsibility: apply world-space brush passes and image draws to the
+## dirt mask, expose the result. Position/normal lookup textures come from
+## SurfaceBaker via set_surface_maps().
 
 var _viewport: SubViewport
-var _brush: Sprite2D
 var _brush_material: ShaderMaterial
 var _texture_size: int
 var _initialized: bool = false
+var _maps_ready: bool = false
 
 
 func setup(texture_size: int, rust_resistance: float, metal_resistance: float) -> void:
 	_texture_size = texture_size
 	_create_viewport()
-	_create_brush(rust_resistance, metal_resistance)
-	_fill_initial_clean()
+	_create_brush_material(rust_resistance, metal_resistance)
+	fill_black()
 	_initialized = true
 
 
@@ -24,100 +26,80 @@ func _create_viewport() -> void:
 	_viewport.render_target_clear_mode = SubViewport.CLEAR_MODE_NEVER
 	_viewport.transparent_bg = false
 	_viewport.disable_3d = true
+	# Float target: sub-1/255 laser strengths still accumulate instead of rounding to zero
+	_viewport.use_hdr_2d = true
 	add_child(_viewport)
 
 
-func _fill_initial_clean() -> void:
-	var fill := ColorRect.new()
-	fill.color = Color(0.0, 0.0, 0.0, 1.0)
-	fill.size = Vector2(_texture_size, _texture_size)
-	_viewport.add_child(fill)
-	_viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
-	RenderingServer.frame_post_draw.connect(fill.queue_free, CONNECT_ONE_SHOT)
-
-
-func _create_brush(rust_resistance: float, metal_resistance: float) -> void:
-	var shader := load("res://cleanable/paint_brush.gdshader") as Shader
+func _create_brush_material(rust_resistance: float, metal_resistance: float) -> void:
+	var shader := load("res://cleanable/world_brush.gdshader") as Shader
 	_brush_material = ShaderMaterial.new()
 	_brush_material.shader = shader
 	_brush_material.set_shader_parameter("rust_resistance", rust_resistance)
 	_brush_material.set_shader_parameter("metal_resistance", metal_resistance)
 
-	var img := Image.create(1, 1, false, Image.FORMAT_RGBA8)
-	img.fill(Color.WHITE)
-	var tex := ImageTexture.create_from_image(img)
 
-	_brush = Sprite2D.new()
-	_brush.texture = tex
-	_brush.material = _brush_material
-	_brush.visible = false
-	_viewport.add_child(_brush)
+## Baked lookup textures (body-local position + normal per texel).
+func set_surface_maps(position_tex: Texture2D, normal_tex: Texture2D) -> void:
+	_brush_material.set_shader_parameter("position_map", position_tex)
+	_brush_material.set_shader_parameter("normal_map", normal_tex)
+	_maps_ready = true
 
 
-func fill_zone_dirt(zone_pixels: Dictionary, tex_size: int) -> void:
-	_brush.visible = false
-	var img := Image.create(tex_size, tex_size, false, Image.FORMAT_RGBA8)
-	img.fill(Color(0, 0, 0, 1))
-	for pixel_key: int in zone_pixels:
-		var x: int = pixel_key % tex_size
-		var y: int = pixel_key / tex_size
-		img.set_pixel(x, y, Color(1, 1, 0, 1))
-	var tex := ImageTexture.create_from_image(img)
-	var sprite := Sprite2D.new()
-	sprite.texture = tex
-	sprite.centered = false
-	_viewport.add_child(sprite)
+## Clean along the world-space segment from->to (body-local coords).
+## Each call adds one transient full-texture brush pass this frame, so several
+## stamps can accumulate in a single render.
+func paint_world(from: Vector3, to: Vector3, radius: float, dir: Vector3, strength: float) -> void:
+	if not _initialized or not _maps_ready:
+		return
+
+	var mat := _brush_material.duplicate() as ShaderMaterial
+	mat.set_shader_parameter("brush_from", from)
+	mat.set_shader_parameter("brush_to", to)
+	mat.set_shader_parameter("beam_dir", dir)
+	mat.set_shader_parameter("brush_radius", radius)
+	mat.set_shader_parameter("strength", strength)
+
+	var rect := ColorRect.new()
+	rect.size = Vector2(_texture_size, _texture_size)
+	rect.material = mat
+	_viewport.add_child(rect)
 	_viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
-	RenderingServer.frame_post_draw.connect(sprite.queue_free, CONNECT_ONE_SHOT)
+	RenderingServer.frame_post_draw.connect(rect.queue_free, CONNECT_ONE_SHOT)
 
 
-func stamp(uv: Vector2, brush_size: int, strength: float) -> void:
+## Draw an image over the dirt mask (alpha-blended). Optionally clear to black
+## first, in the same render, to fully replace the current state.
+func draw_image(img: Image, clear_first: bool = false) -> void:
 	if not _initialized:
 		return
-	_brush.visible = true
-	_brush.position = Vector2(uv.x * _texture_size, uv.y * _texture_size)
-	_brush.scale = Vector2(brush_size, brush_size)
-	_brush_material.set_shader_parameter("strength", strength)
-	_viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
+	if clear_first:
+		_add_transient_fill()
 
+	var scaled := img
+	if img.get_size() != Vector2i(_texture_size, _texture_size):
+		scaled = img.duplicate()
+		scaled.resize(_texture_size, _texture_size, Image.INTERPOLATE_NEAREST)
 
-func clear_zone(pixels: Array, tex_size: int) -> void:
-	_brush.visible = false
-
-	var img := Image.create(tex_size, tex_size, false, Image.FORMAT_RGBA8)
-	img.fill(Color(0, 0, 0, 0))
-	for pixel: Vector2i in pixels:
-		img.set_pixel(pixel.x, pixel.y, Color(0, 0, 0, 1))
-
-	var tex := ImageTexture.create_from_image(img)
 	var sprite := Sprite2D.new()
-	sprite.texture = tex
+	sprite.texture = ImageTexture.create_from_image(scaled)
 	sprite.centered = false
 	_viewport.add_child(sprite)
 	_viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
 	RenderingServer.frame_post_draw.connect(sprite.queue_free, CONNECT_ONE_SHOT)
 
 
-func clear_all() -> void:
-	_brush.visible = false
+func fill_black() -> void:
+	_add_transient_fill()
+	_viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
+
+
+func _add_transient_fill() -> void:
 	var fill := ColorRect.new()
 	fill.color = Color(0.0, 0.0, 0.0, 1.0)
 	fill.size = Vector2(_texture_size, _texture_size)
 	_viewport.add_child(fill)
-	_viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
 	RenderingServer.frame_post_draw.connect(fill.queue_free, CONNECT_ONE_SHOT)
-
-
-func restore_state(img: Image) -> void:
-	_brush.visible = false
-
-	var tex := ImageTexture.create_from_image(img)
-	var sprite := Sprite2D.new()
-	sprite.texture = tex
-	sprite.centered = false
-	_viewport.add_child(sprite)
-	_viewport.render_target_update_mode = SubViewport.UPDATE_ONCE
-	RenderingServer.frame_post_draw.connect(sprite.queue_free, CONNECT_ONE_SHOT)
 
 
 func get_viewport_texture() -> ViewportTexture:
