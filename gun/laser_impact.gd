@@ -9,11 +9,13 @@ var _camera: Camera3D
 var _display_size: float = 0.2
 var _target_size: float = 0.2
 var _punch: float = 0.0
-var _last_brush_size: int = -1
+var _last_brush_radius: float = -1.0
 var _is_firing: bool = false
 
 const TEX_SIZE: int = 128
-const SIZE_PER_BRUSH: float = 0.03
+# The ring is drawn at 0.4 of the texture, so ring diameter = 0.8 * decal size.
+# Scaling by 2.5 makes the visible ring match the cleaned world diameter exactly.
+const RING_SCALE: float = 2.5
 const PUNCH_AMOUNT: float = 0.04
 const LERP_SPEED: float = 14.0
 const PUNCH_DECAY: float = 10.0
@@ -97,17 +99,16 @@ func _process(delta: float) -> void:
 		_light.visible = false
 
 
-func show_impact(hit_position: Vector3, normal: Vector3, brush_size: int = 8) -> void:
+func show_impact(hit_position: Vector3, normal: Vector3, brush_radius: float = 0.075) -> void:
 	global_position = hit_position + normal * 0.005
 
 	_orient_decal_to_camera(normal)
 
-	var world_size: float = brush_size * SIZE_PER_BRUSH
-	_target_size = world_size
+	_target_size = brush_radius * RING_SCALE
 
-	if brush_size != _last_brush_size and _last_brush_size >= 0:
+	if _last_brush_radius >= 0.0 and absf(brush_radius - _last_brush_radius) > 0.0001:
 		_punch = PUNCH_AMOUNT
-	_last_brush_size = brush_size
+	_last_brush_radius = brush_radius
 
 	visible = true
 

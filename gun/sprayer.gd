@@ -1,9 +1,11 @@
 extends Node3D
 ## Sprayer - casts ray and tells cleanable objects to clean at hit point.
+## Brush size is in WORLD units so the cleaned spot always matches the aiming
+## ring, regardless of which part of the model is hit.
 
 signal target_changed(zone_name: String, progress: float, completed: bool)
 signal target_lost()
-signal brush_size_changed(new_size: int)
+signal brush_size_changed(new_radius: float)
 signal hit_dirty_surface(is_dirty: bool)
 
 @export_group("Laser Settings")
@@ -11,9 +13,9 @@ signal hit_dirty_surface(is_dirty: bool)
 @export_range(0.1, 5.0, 0.1) var laser_intensity: float = 1.0
 
 @export_group("Brush Size")
-@export var min_brush_size: int = 4
-@export var max_brush_size: int = 16
-@export var brush_scroll_step: int = 2
+@export var brush_radius_min: float = 0.03
+@export var brush_radius_max: float = 0.15
+@export var brush_radius_step: float = 0.015
 
 @export_group("Distance Falloff")
 @export var optimal_distance: float = 2.0
@@ -24,7 +26,7 @@ var _laser_beam: Node3D
 var _laser_impact: Node3D
 var _laser_particles: Node3D
 var _laser_active: bool = false
-var _current_brush_size: int = 8
+var _brush_radius: float = 0.075
 var _is_contacting: bool = false
 
 var _current_zone_key: String = ""
@@ -65,14 +67,12 @@ func _input(event: InputEvent) -> void:
 				_miss_frames = 0
 
 		elif event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
-			_current_brush_size = min(_current_brush_size + brush_scroll_step, max_brush_size)
-			emit_signal("brush_size_changed", _current_brush_size)
-
+			_brush_radius = minf(_brush_radius + brush_radius_step, brush_radius_max)
+			emit_signal("brush_size_changed", _brush_radius)
 
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
-			_current_brush_size = max(_current_brush_size - brush_scroll_step, min_brush_size)
-			emit_signal("brush_size_changed", _current_brush_size)
-
+			_brush_radius = maxf(_brush_radius - brush_radius_step, brush_radius_min)
+			emit_signal("brush_size_changed", _brush_radius)
 
 
 func _physics_process(delta: float) -> void:
@@ -107,7 +107,11 @@ func _update_target() -> void:
 	var hit_object: Node3D = result.collider as Node3D
 
 	if hit_object.has_method("get_zone_at_position"):
-		var zone_info: Dictionary = hit_object.get_zone_at_position(result.position)
+		var zone_info: Dictionary = hit_object.get_zone_at_position(result.position, result.normal)
+
+		# Aiming ring shows on any cleanable surface, sized to the true brush footprint
+		_laser_impact.show_impact(result.position, result.normal, _brush_radius)
+		_is_aiming_at_cleanable = true
 
 		if not zone_info.is_empty():
 			var zone_key: String = zone_info["key"]
@@ -117,20 +121,15 @@ func _update_target() -> void:
 
 			_current_cleanable = hit_object
 			_current_zone_key = zone_key
-			_is_aiming_at_cleanable = true
-
-			_laser_impact.show_impact(result.position, result.normal, _current_brush_size)
 
 			emit_signal("target_changed", zone_name, progress, completed)
 			emit_signal("hit_dirty_surface", not completed)
 		else:
 			var has_dirt: bool = false
 			if hit_object.has_method("has_dirt_at"):
-				has_dirt = hit_object.has_dirt_at(result.position)
+				has_dirt = hit_object.has_dirt_at(result.position, result.normal)
 
 			_clear_target()
-			_laser_impact.hide_impact()
-			_is_aiming_at_cleanable = false
 			emit_signal("hit_dirty_surface", has_dirt)
 	else:
 		_clear_target()
@@ -188,7 +187,8 @@ func _spray(delta: float) -> void:
 	if hit_object.has_method("clean_at"):
 		var effectiveness := _calculate_effectiveness(distance)
 		var pressure := _get_pressure_multiplier()
-		hit_object.clean_at(hit_position, hit_normal, laser_intensity, effectiveness, delta, _current_brush_size, pressure)
+		var beam_dir := (hit_position - ray_from).normalized()
+		hit_object.clean_at(hit_position, beam_dir, laser_intensity, effectiveness, delta, _brush_radius, pressure)
 		_start_contact()
 		_show_particles(beam_end, hit_normal)
 		_laser_impact.set_firing(true)
@@ -223,10 +223,11 @@ func _calculate_effectiveness(distance: float) -> float:
 	return 1.0 - (distance_past_optimal / falloff_range)
 
 
+## Small brush = focused beam (more power per area), large brush = wide and soft.
 func _get_pressure_multiplier() -> float:
-	var size_range: float = max_brush_size - min_brush_size
-	var normalized: float = (_current_brush_size - min_brush_size) / size_range
-	return lerp(2.0, 0.5, normalized)
+	var size_range: float = maxf(brush_radius_max - brush_radius_min, 0.0001)
+	var normalized: float = clampf((_brush_radius - brush_radius_min) / size_range, 0.0, 1.0)
+	return lerpf(2.2, 0.8, normalized)
 
 
 func _hide_particles() -> void:
