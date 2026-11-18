@@ -15,6 +15,8 @@ extends Node
 ##   stroke     a fast sweep leaves no gaps between frames
 ##   near miss  the beam still cleans when only its edge overlaps a part
 ##   zones      completing a zone wipes exactly that zone
+##   content    zones carry part names, dirt vision drives glow + overlay
+##              together, the pause-menu settings apply and are saved
 ##   full job   a bot standing where a player can stand cleans everything:
 ##              every zone completes, the victory plays, the result screen
 ##              shows, and "play again" starts a fresh job
@@ -75,6 +77,7 @@ func _run() -> void:
 	await _test_stroke()
 	await _test_near_miss()
 	await _test_zone_wipe()
+	await _test_content()
 	await _test_full_job()
 
 # =============================================================================
@@ -440,6 +443,73 @@ func _test_zone_wipe() -> void:
 	await _frames(6)
 
 
+func _find_sliders(node: Node, out: Array) -> void:
+	for child: Node in node.get_children():
+		if child is HSlider:
+			out.append(child)
+		_find_sliders(child, out)
+
+
+func _press_escape() -> void:
+	var esc := InputEventAction.new()
+	esc.action = "ui_cancel"
+	esc.pressed = true
+	Input.parse_input_event(esc)
+	await _frames(3)
+
+
+func _test_content() -> void:
+	print("content")
+	var names: Array = []
+	var state: Dictionary = _cleanable.get_zones_state()
+	for key: String in state:
+		names.append(state[key]["name"])
+	_check(names == ["Base", "Lower Arm", "Elbow", "Forearm", "Wrist"], "zones carry part names (%s)" % ", ".join(names))
+
+	# Dirt vision: surface glow and screen overlay follow one switch
+	var overlay: CanvasItem = get_tree().current_scene.get_node_or_null("DirtVisionOverlay/Overlay")
+	var material: ShaderMaterial = (_cleanable.get("_materials") as Array)[0]
+	DirtVision.set_enabled(true)
+	await _frames(2)
+	var on: bool = overlay != null and overlay.visible and material.get_shader_parameter("dirt_vision_enabled")
+	await _shot("03b_dirt_vision")
+	DirtVision.set_enabled(false)
+	await _frames(2)
+	var off: bool = overlay != null and not overlay.visible and not material.get_shader_parameter("dirt_vision_enabled")
+	_check(on and off, "dirt vision switches the surface glow and the screen overlay together")
+
+	# Settings in the pause menu (the player's real settings are restored afterwards)
+	var saved_sensitivity: float = GameSettings.mouse_sensitivity
+	var saved_volume: float = GameSettings.master_volume
+	await _press_escape()
+	var sliders: Array = []
+	_find_sliders(get_tree().current_scene.get_node("GameFlow"), sliders)
+	_check(get_tree().paused and sliders.size() == 2, "pause menu offers sensitivity and volume sliders")
+	if sliders.size() == 2:
+		(sliders[0] as HSlider).value = 2.0
+		(sliders[1] as HSlider).value = 0.25
+		await _shot("03c_settings")
+		var bus: int = AudioServer.get_bus_index("Master")
+		_check(is_equal_approx(GameSettings.mouse_sensitivity, 2.0), "sensitivity slider changes the setting")
+		_check(is_equal_approx(GameSettings.master_volume, 0.25) and absf(AudioServer.get_bus_volume_db(bus) - linear_to_db(0.25)) < 0.01, "volume slider changes the master volume")
+
+		# mouse look really scales with the setting
+		var motion := InputEventMouseMotion.new()
+		motion.relative = Vector2(100, 0)
+		var yaw_before: float = _player.rotation.y
+		_player.call("_input", motion)
+		var turned: float = absf(_player.rotation.y - yaw_before)
+		_check(is_equal_approx(turned, 100.0 * _player.mouse_sensitivity * 2.0), "mouse look follows the sensitivity setting")
+	await _press_escape()
+	var config := ConfigFile.new()
+	var loaded: bool = config.load(GameSettings.PATH) == OK
+	_check(not get_tree().paused and loaded and is_equal_approx(float(config.get_value("audio", "master_volume", -1.0)), 0.25),
+		"closing the pause menu saves the settings")
+	GameSettings.set_mouse_sensitivity(saved_sensitivity)
+	GameSettings.set_master_volume(saved_volume)
+	GameSettings.save_settings()
+
+
 ## Eye positions a player can really reach: a walk around the object,
 ## standing, crouched, and at the top of a jump.
 func _viewpoints(mn: Vector3, mx: Vector3) -> Array[Vector3]:
@@ -515,6 +585,10 @@ func _test_full_job() -> void:
 				break
 	jobs.sort_custom(func(p: Array, q: Array) -> bool: return p[0] < q[0])
 
+	# Leave dirt vision on: a clean object is invisible in it, so the game has
+	# to switch it off by itself for the victory animation.
+	DirtVision.set_enabled(true)
+
 	# Fire. Extra power only shortens the run; where the beam can reach is unchanged.
 	var normal_intensity: float = _sprayer.laser_intensity
 	_sprayer.laser_intensity = normal_intensity * 5.0
@@ -542,6 +616,7 @@ func _test_full_job() -> void:
 	_check(all_done, "every zone completes from positions a player can reach (%d aims)" % jobs.size())
 	_check(_cleanable.get_total_progress() > 0.999, "overall progress reaches 100%")
 	_check(_cleanable.get("_victory_triggered"), "victory is triggered")
+	_check(not DirtVision.enabled, "dirt vision switches off for the victory")
 	_aim(Vector3(2.4, 1.5, -2.4), Vector3(-0.3, 0.7, -5.0))
 	await _shot("05_all_clean")
 
@@ -576,15 +651,10 @@ func _test_full_job() -> void:
 	_check(GameManager.current_state == GameManager.State.PLAYING and not get_tree().paused, "new job is running")
 
 	# Pause menu opens and closes
-	var esc := InputEventAction.new()
-	esc.action = "ui_cancel"
-	esc.pressed = true
-	Input.parse_input_event(esc)
-	await _frames(3)
+	await _press_escape()
 	var was_paused: bool = get_tree().paused
 	await _shot("07_pause_menu")
-	Input.parse_input_event(esc)
-	await _frames(3)
+	await _press_escape()
 	_check(was_paused and not get_tree().paused, "ESC opens and closes the pause menu")
 
 	# Restarting while the surface is still baking must not hang or crash

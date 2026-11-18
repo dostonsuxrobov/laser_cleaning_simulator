@@ -15,35 +15,34 @@ float random(vec2 uv) {
 }
 
 void fragment() {
-	vec4 screen = texture(screen_texture, SCREEN_UV);
-	
-	if (!enabled) {
-		COLOR = screen;
-		return;
+	vec3 result = texture(screen_texture, SCREEN_UV).rgb;
+
+	if (enabled) {
+		// Convert to grayscale luminance
+		float luminance = dot(result, vec3(0.299, 0.587, 0.114));
+
+		// Apply green tint
+		vec3 tinted = mix(result, tint_color * luminance * 1.5, tint_strength);
+
+		// Boost contrast
+		tinted = pow(max(tinted, vec3(0.0)), vec3(1.2));
+
+		// Vignette
+		vec2 center = SCREEN_UV - vec2(0.5);
+		float dist = length(center);
+		float vignette = smoothstep(vignette_radius, vignette_radius - 0.3, dist);
+		tinted *= mix(1.0 - vignette_strength, 1.0, vignette);
+
+		// Noise grain
+		float noise = random(SCREEN_UV + TIME * 0.1) * noise_amount;
+		tinted += vec3(noise);
+
+		// Scanlines
+		float scanline = sin(SCREEN_UV.y * 800.0) * 0.5 + 0.5;
+		tinted *= mix(1.0, scanline, scanline_strength);
+
+		result = tinted;
 	}
-	
-	// Convert to grayscale luminance
-	float luminance = dot(screen.rgb, vec3(0.299, 0.587, 0.114));
-	
-	// Apply green tint
-	vec3 tinted = mix(screen.rgb, tint_color * luminance * 1.5, tint_strength);
-	
-	// Boost contrast
-	tinted = pow(tinted, vec3(1.2));
-	
-	// Vignette
-	vec2 center = SCREEN_UV - vec2(0.5);
-	float dist = length(center);
-	float vignette = smoothstep(vignette_radius, vignette_radius - 0.3, dist);
-	tinted *= mix(1.0 - vignette_strength, 1.0, vignette);
-	
-	// Noise grain
-	float noise = random(SCREEN_UV + TIME * 0.1) * noise_amount;
-	tinted += vec3(noise);
-	
-	// Scanlines
-	float scanline = sin(SCREEN_UV.y * 800.0) * 0.5 + 0.5;
-	tinted *= mix(1.0, scanline, scanline_strength);
-	
-	COLOR = vec4(tinted, 1.0);
+
+	COLOR = vec4(result, 1.0);
 }

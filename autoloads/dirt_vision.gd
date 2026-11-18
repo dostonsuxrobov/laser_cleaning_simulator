@@ -8,6 +8,12 @@ var enabled: bool = false
 
 func _input(event: InputEvent) -> void:
 	if event.is_action_pressed("dirt_vision"):
-		enabled = not enabled
-		emit_signal("dirt_vision_changed", enabled)
-		print("Dirt Vision: ", "ON" if enabled else "OFF")
+		set_enabled(not enabled)
+
+
+## The one place the state changes, so every listener stays in sync.
+func set_enabled(value: bool) -> void:
+	if enabled == value:
+		return
+	enabled = value
+	dirt_vision_changed.emit(enabled)

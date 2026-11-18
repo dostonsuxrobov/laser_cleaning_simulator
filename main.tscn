@@ -1,4 +1,4 @@
-[gd_scene load_steps=10 format=3 uid="uid://bdgp2igqis1i1"]
+[gd_scene load_steps=11 format=3 uid="uid://bdgp2igqis1i1"]
 
 [ext_resource type="PackedScene" uid="uid://cthxedib1knai" path="res://player/player.tscn" id="1_player"]
 [ext_resource type="PackedScene" uid="uid://05nsxj0gjhwf" path="res://ui/crosshair.tscn" id="4_crosshair"]
@@ -6,6 +6,7 @@
 [ext_resource type="Script" uid="uid://bpnjkwjujhjrx" path="res://ui/progress_ui.gd" id="6_7mycd"]
 [ext_resource type="Script" uid="uid://0t88ui10hjqu" path="res://game_flow.gd" id="6_272bh"]
 [ext_resource type="PackedScene" uid="uid://sk4l84f8vg3r" path="res://cleanable/robot_arm/robot_arm.tscn" id="6_kek77"]
+[ext_resource type="PackedScene" path="res://ui/dirt_vision_overlay.tscn" id="7_dvo"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 sky_top_color = Color(0.4, 0.6, 0.8, 1)
@@ -38,6 +39,8 @@ shadow_enabled = true
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
 
 [node name="Crosshair" parent="." instance=ExtResource("4_crosshair")]
+
+[node name="DirtVisionOverlay" parent="." instance=ExtResource("7_dvo")]
 
 [node name="ProgressUI" type="CanvasLayer" parent="."]
 script = ExtResource("6_7mycd")

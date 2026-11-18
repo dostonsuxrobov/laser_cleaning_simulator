@@ -79,6 +79,8 @@ func _open() -> void:
 
 
 func _close() -> void:
+	if _is_open:
+		GameSettings.save_settings()
 	_is_open = false
 	get_tree().paused = false
 	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
@@ -151,6 +153,22 @@ func _build_ui() -> void:
 	var overall_row := _create_progress_row("OVERALL", 0.0, true)
 	vbox.add_child(overall_row)
 	
+	# Settings
+	var sep3 := HSeparator.new()
+	sep3.add_theme_constant_override("separation", 8)
+	vbox.add_child(sep3)
+
+	vbox.add_child(_create_slider_row(
+		"SENSITIVITY", GameSettings.SENSITIVITY_MIN, GameSettings.SENSITIVITY_MAX, 0.05,
+		GameSettings.mouse_sensitivity, GameSettings.set_mouse_sensitivity,
+		func(value: float) -> String: return "%.2fx" % value
+	))
+	vbox.add_child(_create_slider_row(
+		"VOLUME", 0.0, 1.0, 0.01,
+		GameSettings.master_volume, GameSettings.set_master_volume,
+		func(value: float) -> String: return "%d%%" % int(round(value * 100.0))
+	))
+
 	# Spacer
 	var spacer := Control.new()
 	spacer.custom_minimum_size = Vector2(0, 8)
@@ -239,6 +257,44 @@ func _create_progress_row(label_text: String, progress: float, is_overall: bool,
 		_overall_label = pct
 		_overall_bar = bar
 	
+	return row
+
+
+## One settings line: name, slider, current value. `apply` receives the new
+## value on every change; `format` turns it into the text on the right.
+func _create_slider_row(label_text: String, min_value: float, max_value: float, step: float, value: float, apply: Callable, format: Callable) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
+
+	var label := Label.new()
+	label.text = label_text
+	label.custom_minimum_size = Vector2(100, 0)
+	label.add_theme_font_size_override("font_size", 13)
+	label.add_theme_color_override("font_color", Color(0.7, 0.7, 0.7))
+	row.add_child(label)
+
+	var value_label := Label.new()
+	value_label.text = format.call(value)
+	value_label.custom_minimum_size = Vector2(40, 0)
+	value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	value_label.add_theme_font_size_override("font_size", 13)
+	value_label.add_theme_color_override("font_color", Color(0.8, 0.8, 0.8))
+
+	var slider := HSlider.new()
+	slider.min_value = min_value
+	slider.max_value = max_value
+	slider.step = step
+	slider.value = value
+	slider.custom_minimum_size = Vector2(BAR_WIDTH, 20)
+	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	slider.focus_mode = Control.FOCUS_NONE
+	slider.value_changed.connect(func(new_value: float) -> void:
+		apply.call(new_value)
+		value_label.text = format.call(new_value)
+	)
+	row.add_child(slider)
+	row.add_child(value_label)
 	return row
 
 

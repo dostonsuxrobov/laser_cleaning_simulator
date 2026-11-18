@@ -156,7 +156,9 @@ func _ready() -> void:
 
 	RenderingServer.frame_post_draw.connect(_on_frame_post_draw)
 	if has_node("/root/DirtVision"):
-		get_node("/root/DirtVision").dirt_vision_changed.connect(_on_dirt_vision_changed)
+		var dirt_vision: Node = get_node("/root/DirtVision")
+		dirt_vision.dirt_vision_changed.connect(_on_dirt_vision_changed)
+		_on_dirt_vision_changed(dirt_vision.enabled)
 
 
 func _exit_tree() -> void:
@@ -244,6 +246,8 @@ func end_stroke() -> void:
 ## Show the aiming ring: the outline of what clean_at() with the same
 ## arguments would clean. `firing` adds the hot glow under the beam.
 func set_aim(world_pos: Vector3, beam_dir: Vector3, brush_radius: float, depth_front: float, depth_back: float, firing: bool) -> void:
+	if _victory_triggered:
+		return  # nothing left to aim at
 	_aim_shown = true
 	for mat: ShaderMaterial in _materials:
 		mat.set_shader_parameter("aim_visible", 1.0)
@@ -274,10 +278,7 @@ func clean_all() -> void:
 		var zone: Dictionary = _zones[zone_key]
 		zone["rust_remaining"] = 0.0
 		zone["metal_remaining"] = 0.0
-		if zone["completed"]:
-			continue
 		zone["completed"] = true
-		_start_flash(zone["id"])
 
 	_paint_dirty = false
 	_last_snapshot = null
@@ -957,6 +958,9 @@ func _check_object_completed() -> void:
 		return
 	_victory_triggered = true
 	clear_aim()
+	# In dirt vision a fully clean object is invisible - show it for the finale.
+	if has_node("/root/DirtVision"):
+		get_node("/root/DirtVision").set_enabled(false)
 
 	object_completed.emit()
 	_play_victory_animation()
