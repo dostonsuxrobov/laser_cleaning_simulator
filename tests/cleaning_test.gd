@@ -10,13 +10,16 @@ extends Node
 ##
 ## Checks:
 ##   startup    surface bake finishes, zones are found, progress starts at 0
+##   surface    dirt shown on a surface belongs to that surface (catches
+##              badly unwrapped faces that display other parts' texels)
 ##   precision  nothing outside the laser beam is cleaned, everything well
 ##              inside the aiming ring is - on flat, angled and curved spots
 ##   stroke     a fast sweep leaves no gaps between frames
 ##   near miss  the beam still cleans when only its edge overlaps a part
 ##   zones      completing a zone wipes exactly that zone
-##   content    zones carry part names, dirt vision drives glow + overlay
-##              together, the pause-menu settings apply and are saved
+##   content    zones carry part names; one press of Q switches dirt vision
+##              on and it stays on, the object turns see-through while the
+##              surroundings do not change; pause-menu settings apply and save
 ##   full job   a bot standing where a player can stand cleans everything:
 ##              every zone completes, the victory plays, the result screen
 ##              shows, and "play again" starts a fresh job
@@ -73,6 +76,7 @@ func _run() -> void:
 	if not await _acquire():
 		return
 	await _test_startup()
+	await _test_surface_map()
 	await _test_precision()
 	await _test_stroke()
 	await _test_near_miss()
@@ -289,6 +293,58 @@ func _test_startup() -> void:
 	await _shot("01_start")
 
 
+## Walks every face of the model, looks up the mask texel each point of it
+## displays, and checks that the texel's baked surface point is that point.
+## A texel that fails can never be cleaned from where the player sees it.
+func _test_surface_map() -> void:
+	print("surface map")
+	await _reset_dirt()
+	var verts: PackedVector3Array = _cleanable.get("_face_verts")
+	var uvs: PackedVector2Array = _cleanable.get("_face_uvs")
+	var samples: int = 0
+	var wrong: int = 0
+	var by_face: Dictionary = {}
+	@warning_ignore("integer_division")
+	for f: int in range(verts.size() / 3):
+		var b: int = f * 3
+		var ua: Vector2 = uvs[b]
+		var ub: Vector2 = uvs[b + 1]
+		var uc: Vector2 = uvs[b + 2]
+		var extent: float = maxf((ub - ua).length(), maxf((uc - ua).length(), (uc - ub).length())) * _size
+		var n: int = clampi(int(extent / 2.0), 1, 96)
+		for i: int in range(n):
+			for j: int in range(n - i):
+				var wa: float = (i + 0.333) / n
+				var wb: float = (j + 0.333) / n
+				var wc: float = 1.0 - wa - wb
+				var uv: Vector2 = ua * wa + ub * wb + uc * wc
+				var tx: int = clampi(int(uv.x * _size), 0, _size - 1)
+				var ty: int = clampi(int(uv.y * _size), 0, _size - 1)
+				var t: int = tx + ty * _size
+				if _before[t] < 0.9:
+					continue
+				samples += 1
+				var point: Vector3 = verts[b] * wa + verts[b + 1] * wb + verts[b + 2] * wc
+				if point.distance_to(Vector3(_pos[t * 4], _pos[t * 4 + 1], _pos[t * 4 + 2])) > 0.03:
+					wrong += 1
+					by_face[f] = int(by_face.get(f, 0)) + 1
+	_check(samples > 10000 and wrong <= samples / 2000,
+		"dirt shown on a surface belongs to that surface (%d of %d sampled points map elsewhere)" % [wrong, samples])
+	if wrong > samples / 2000:
+		# name the worst offenders so the model can be fixed
+		var worst: Array = by_face.keys()
+		worst.sort_custom(func(p: int, q: int) -> bool: return by_face[p] > by_face[q])
+		print("        %d faces involved; worst:" % worst.size())
+		for f: int in worst.slice(0, 12):
+			var b: int = f * 3
+			var centre: Vector3 = _cleanable.to_global((verts[b] + verts[b + 1] + verts[b + 2]) / 3.0)
+			var baked := Vector3.ZERO
+			var uv: Vector2 = (uvs[b] + uvs[b + 1] + uvs[b + 2]) / 3.0
+			var t: int = clampi(int(uv.x * _size), 0, _size - 1) + clampi(int(uv.y * _size), 0, _size - 1) * _size
+			baked = _cleanable.to_global(Vector3(_pos[t * 4], _pos[t * 4 + 1], _pos[t * 4 + 2]))
+			print("        face %d: %d points, at %s, uv %s -> texel belongs to %s" % [f, by_face[f], centre, uv, baked])
+
+
 func _test_precision() -> void:
 	print("precision")
 	# [label, where the player's eye is, what they aim at]
@@ -443,6 +499,19 @@ func _test_zone_wipe() -> void:
 	await _frames(6)
 
 
+## Mean absolute color difference (0..1) between two screenshots in a region.
+func _region_difference(a: Image, b: Image, region: Rect2i) -> float:
+	var total: float = 0.0
+	var count: int = 0
+	for y: int in range(region.position.y, region.end.y, 3):
+		for x: int in range(region.position.x, region.end.x, 3):
+			var ca: Color = a.get_pixel(x, y)
+			var cb: Color = b.get_pixel(x, y)
+			total += (absf(ca.r - cb.r) + absf(ca.g - cb.g) + absf(ca.b - cb.b)) / 3.0
+			count += 1
+	return total / maxf(count, 1)
+
+
 func _find_sliders(node: Node, out: Array) -> void:
 	for child: Node in node.get_children():
 		if child is HSlider:
@@ -466,17 +535,43 @@ func _test_content() -> void:
 		names.append(state[key]["name"])
 	_check(names == ["Base", "Lower Arm", "Elbow", "Forearm", "Wrist"], "zones carry part names (%s)" % ", ".join(names))
 
-	# Dirt vision: surface glow and screen overlay follow one switch
-	var overlay: CanvasItem = get_tree().current_scene.get_node_or_null("DirtVisionOverlay/Overlay")
-	var material: ShaderMaterial = (_cleanable.get("_materials") as Array)[0]
-	DirtVision.set_enabled(true)
-	await _frames(2)
-	var on: bool = overlay != null and overlay.visible and material.get_shader_parameter("dirt_vision_enabled")
+	# Dirt vision: one press of Q, no holding
+	_aim(Vector3(2.4, 1.6, -3.0), Vector3(-0.3, 0.7, -5.0))
+	await _frames(4)
+	var normal_view: Image = get_viewport().get_texture().get_image()
+	var q_down := InputEventKey.new()
+	q_down.physical_keycode = KEY_Q
+	q_down.pressed = true
+	var q_up := InputEventKey.new()
+	q_up.physical_keycode = KEY_Q
+	q_up.pressed = false
+	Input.parse_input_event(q_down)
+	await _frames(3)
+	var on_after_press: bool = DirtVision.enabled
+	Input.parse_input_event(q_up)
+	await _frames(40)
+	_check(on_after_press and DirtVision.enabled and _cleanable.is_dirt_vision_on(),
+		"one press of Q switches dirt vision on and it stays on after the key is released")
+
+	# The object is see-through, everything around it is untouched
+	var vision_view: Image = get_viewport().get_texture().get_image()
 	await _shot("03b_dirt_vision")
-	DirtVision.set_enabled(false)
-	await _frames(2)
-	var off: bool = overlay != null and not overlay.visible and not material.get_shader_parameter("dirt_vision_enabled")
-	_check(on and off, "dirt vision switches the surface glow and the screen overlay together")
+	var wall_diff: float = _region_difference(normal_view, vision_view, Rect2i(40, 40, 260, 160))
+	var floor_diff: float = _region_difference(normal_view, vision_view, Rect2i(60, 560, 400, 120))
+	var robot_diff: float = _region_difference(normal_view, vision_view, Rect2i(440, 260, 400, 200))
+	_check(wall_diff < 0.004 and floor_diff < 0.004, "surroundings look the same in dirt vision (wall %.4f, floor %.4f)" % [wall_diff, floor_diff])
+	_check(robot_diff > 0.02, "the object itself changes to the see-through view (%.3f)" % robot_diff)
+	var shadows_kept: bool = true
+	for slot: Dictionary in (_cleanable.get("_vision_slots") as Array):
+		if not (slot["shadow"] as Node3D).visible:
+			shadows_kept = false
+	_check(shadows_kept and not (_cleanable.get("_vision_slots") as Array).is_empty(), "the object keeps its shadow in dirt vision")
+
+	Input.parse_input_event(q_down)
+	await _frames(3)
+	Input.parse_input_event(q_up)
+	await _frames(3)
+	_check(not DirtVision.enabled and not _cleanable.is_dirt_vision_on(), "a second press of Q switches it off again")
 
 	# Settings in the pause menu (the player's real settings are restored afterwards)
 	var saved_sensitivity: float = GameSettings.mouse_sensitivity
