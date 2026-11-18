@@ -1,13 +1,13 @@
 [gd_scene load_steps=28 format=4 uid="uid://sk4l84f8vg3r"]
 
 [ext_resource type="Script" uid="uid://bw6lndpmkdxu2" path="res://cleanable/cleanable_mesh.gd" id="1_2pmgj"]
-[ext_resource type="Texture2D" uid="uid://bncqenkx4e3fe" path="res://cleanable/robot_arm/robot_arm_clean.png" id="1_kfjaf"]
 [ext_resource type="Texture2D" uid="uid://b6syd1i045rir" path="res://cleanable/robot_arm/robot_arm_roughness.png" id="2_2pmgj"]
 [ext_resource type="Texture2D" uid="uid://b57kxeeccjvnx" path="res://cleanable/robot_arm/robot_arm_zone.png" id="2_j6w7o"]
 [ext_resource type="Texture2D" uid="uid://cqasng50ji3du" path="res://cleanable/robot_arm/robot_arm_robot_arm_clean.png" id="2_khxcx"]
 [ext_resource type="Texture2D" uid="uid://daj3i2dugdasl" path="res://cleanable/robot_arm/robot_arm_normal.png" id="3_khxcx"]
 [ext_resource type="Shader" uid="uid://cnshiuiu4m3bb" path="res://cleanable/dirt.gdshader" id="5_6abkn"]
 [ext_resource type="Texture2D" uid="uid://xlsia671v78e" path="res://cleanable/robot_arm/robot_arm_rust.png" id="6_6abkn"]
+[ext_resource type="Texture2D" uid="uid://cu6inan3mgd1k" path="res://cleanable/robot_arm/robot_arm_rust_normal.png" id="7_rustn"]
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_dd11j"]
 resource_name = "robot_arm_material"
@@ -59,9 +59,16 @@ shadow_mesh = SubResource("ArrayMesh_p0m7g")
 render_priority = 0
 shader = ExtResource("5_6abkn")
 shader_parameter/rust_albedo = ExtResource("6_6abkn")
+shader_parameter/rust_normal = ExtResource("7_rustn")
 shader_parameter/rust_roughness = 0.9
+shader_parameter/metal_normal = ExtResource("3_khxcx")
+shader_parameter/metal_tint = Color(0.62, 0.64, 0.68, 1)
+shader_parameter/metal_stain = 0.7
+shader_parameter/chrome_normal = ExtResource("3_khxcx")
+shader_parameter/chrome_use_orm = true
+shader_parameter/chrome_orm = ExtResource("2_2pmgj")
 shader_parameter/metal_roughness = 0.5
-shader_parameter/chrome_albedo = ExtResource("1_kfjaf")
+shader_parameter/chrome_albedo = ExtResource("2_khxcx")
 shader_parameter/chrome_roughness = 0.10000000475
 shader_parameter/chrome_metallic = 0.10000000475
 shader_parameter/dirt_vision_enabled = false
@@ -110,9 +117,16 @@ shadow_mesh = SubResource("ArrayMesh_4g3uh")
 render_priority = 0
 shader = ExtResource("5_6abkn")
 shader_parameter/rust_albedo = ExtResource("6_6abkn")
+shader_parameter/rust_normal = ExtResource("7_rustn")
 shader_parameter/rust_roughness = 0.9
+shader_parameter/metal_normal = ExtResource("3_khxcx")
+shader_parameter/metal_tint = Color(0.62, 0.64, 0.68, 1)
+shader_parameter/metal_stain = 0.7
+shader_parameter/chrome_normal = ExtResource("3_khxcx")
+shader_parameter/chrome_use_orm = true
+shader_parameter/chrome_orm = ExtResource("2_2pmgj")
 shader_parameter/metal_roughness = 0.5
-shader_parameter/chrome_albedo = ExtResource("1_kfjaf")
+shader_parameter/chrome_albedo = ExtResource("2_khxcx")
 shader_parameter/chrome_roughness = 0.1
 shader_parameter/chrome_metallic = 0.10000000475
 shader_parameter/dirt_vision_enabled = false
@@ -161,9 +175,16 @@ shadow_mesh = SubResource("ArrayMesh_ds2bh")
 render_priority = 0
 shader = ExtResource("5_6abkn")
 shader_parameter/rust_albedo = ExtResource("6_6abkn")
+shader_parameter/rust_normal = ExtResource("7_rustn")
 shader_parameter/rust_roughness = 0.9
+shader_parameter/metal_normal = ExtResource("3_khxcx")
+shader_parameter/metal_tint = Color(0.62, 0.64, 0.68, 1)
+shader_parameter/metal_stain = 0.7
+shader_parameter/chrome_normal = ExtResource("3_khxcx")
+shader_parameter/chrome_use_orm = true
+shader_parameter/chrome_orm = ExtResource("2_2pmgj")
 shader_parameter/metal_roughness = 0.5
-shader_parameter/chrome_albedo = ExtResource("1_kfjaf")
+shader_parameter/chrome_albedo = ExtResource("2_khxcx")
 shader_parameter/chrome_roughness = 0.1
 shader_parameter/chrome_metallic = 0.10000000475
 shader_parameter/dirt_vision_enabled = false
@@ -212,9 +233,16 @@ shadow_mesh = SubResource("ArrayMesh_cjmym")
 render_priority = 0
 shader = ExtResource("5_6abkn")
 shader_parameter/rust_albedo = ExtResource("6_6abkn")
+shader_parameter/rust_normal = ExtResource("7_rustn")
 shader_parameter/rust_roughness = 0.9
+shader_parameter/metal_normal = ExtResource("3_khxcx")
+shader_parameter/metal_tint = Color(0.62, 0.64, 0.68, 1)
+shader_parameter/metal_stain = 0.7
+shader_parameter/chrome_normal = ExtResource("3_khxcx")
+shader_parameter/chrome_use_orm = true
+shader_parameter/chrome_orm = ExtResource("2_2pmgj")
 shader_parameter/metal_roughness = 0.5
-shader_parameter/chrome_albedo = ExtResource("1_kfjaf")
+shader_parameter/chrome_albedo = ExtResource("2_khxcx")
 shader_parameter/chrome_roughness = 0.1
 shader_parameter/chrome_metallic = 0.10000000475
 shader_parameter/dirt_vision_enabled = false
@@ -291,8 +319,13 @@ data = PackedVector3Array(-1.3508999, 0.4888, -0.94579995, -1.3824999, 0.4863, -
 [node name="robot_arm" type="StaticBody3D"]
 script = ExtResource("1_2pmgj")
 zone_map = ExtResource("2_j6w7o")
-rust_complete_threshold = 0.8400000000000001
-metal_complete_threshold = 0.8700000000000001
+zone_names = {
+Color(0, 0, 1, 1): "Base",
+Color(1, 0, 0, 1): "Lower Arm",
+Color(1, 1, 0, 1): "Elbow",
+Color(1, 0.4, 0.008, 1): "Forearm",
+Color(0, 1, 0, 1): "Wrist"
+}
 min_zone_pixels = 200
 
 [node name="Armature" type="Node3D" parent="."]

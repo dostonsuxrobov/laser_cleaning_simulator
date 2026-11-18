@@ -30,6 +30,7 @@ func complete_job() -> void:
 		return
 	
 	current_state = State.COMPLETED
+	DirtVision.set_enabled(false)
 	ReplayRecorder.stop_recording()
 	
 	var elapsed: float = (Time.get_ticks_msec() / 1000.0) - job_start_time
@@ -46,4 +47,6 @@ func restart_job() -> void:
 	current_state = State.INTRO
 	job_start_time = 0.0
 	ReplayRecorder.clear()
+	AudioManager.stop_contact()
+	DirtVision.set_enabled(false)
 	get_tree().reload_current_scene()

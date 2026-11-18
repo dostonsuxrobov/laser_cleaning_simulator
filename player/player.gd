@@ -25,8 +25,9 @@ func _ready() -> void:
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
-		rotate_y(-event.relative.x * mouse_sensitivity)
-		camera_pivot.rotate_x(-event.relative.y * mouse_sensitivity)
+		var sensitivity: float = mouse_sensitivity * GameSettings.mouse_sensitivity
+		rotate_y(-event.relative.x * sensitivity)
+		camera_pivot.rotate_x(-event.relative.y * sensitivity)
 		camera_pivot.rotation.x = clamp(camera_pivot.rotation.x, -1.5, 1.5)
 
 

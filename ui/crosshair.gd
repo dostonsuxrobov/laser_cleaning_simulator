@@ -13,6 +13,8 @@ func _ready() -> void:
 
 func _find_sprayer() -> void:
 	await get_tree().process_frame
+	if not is_inside_tree():
+		return  # scene was restarted while waiting
 	var sprayers := get_tree().get_nodes_in_group("sprayer")
 	if sprayers.size() > 0:
 		_sprayer = sprayers[0] as Node3D

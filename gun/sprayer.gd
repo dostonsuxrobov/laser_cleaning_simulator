@@ -1,7 +1,14 @@
 extends Node3D
-## Sprayer - casts ray and tells cleanable objects to clean at hit point.
-## Brush size is in WORLD units so the cleaned spot always matches the aiming
-## ring, regardless of which part of the model is hit.
+## Sprayer - traces the laser beam and tells cleanable objects where it lands.
+##
+## The beam is a cylinder of brush radius around the view ray. Besides the
+## centre ray, a handful of rays spread across that cylinder find out what the
+## beam really touches, which gives three things a single ray cannot:
+##  - the depth range of the lit surface, so steeply angled surfaces are cleaned
+##    across the whole ring while hidden layers behind them are left alone;
+##  - near-miss cleaning: the beam still works when only its edge overlaps a
+##    part (thin parts and silhouettes no longer need pixel-perfect aim);
+##  - honest feedback: sparks and crackle only while dirt is actually burning.
 
 signal target_changed(zone_name: String, progress: float, completed: bool)
 signal target_lost()
@@ -21,6 +28,21 @@ signal hit_dirty_surface(is_dirty: bool)
 @export var optimal_distance: float = 2.0
 @export var max_distance: float = 8.0
 
+# Sample rays across the beam, as (radius fraction, angle) pairs.
+const INNER_RING: float = 0.5
+const OUTER_RING: float = 0.9
+const INNER_SAMPLES: int = 4
+const OUTER_SAMPLES: int = 8
+# Largest depth step between neighbouring samples that still counts as one
+# continuous surface (in beam radii). Covers surfaces tilted up to ~70 degrees.
+const SURFACE_JUMP_RADII: float = 1.2
+const SURFACE_JUMP_MIN: float = 0.02
+# Slack around the sampled surface, toward the laser and away from it.
+const FRONT_PAD_RADII: float = 1.0
+const FRONT_PAD_MIN: float = 0.02
+const BACK_PAD_RADII: float = 0.35
+const BACK_PAD_MIN: float = 0.01
+
 var _camera: Camera3D
 var _laser_beam: Node3D
 var _laser_impact: Node3D
@@ -30,14 +52,9 @@ var _brush_radius: float = 0.075
 var _is_contacting: bool = false
 
 var _current_zone_key: String = ""
-var _current_cleanable: Node3D = null
-var _is_aiming_at_cleanable: bool = false
-
-var _last_hit_position: Vector3 = Vector3.ZERO
-var _last_hit_normal: Vector3 = Vector3.UP
-var _last_hit_object: Node3D = null
-var _miss_frames: int = 0
-const MAX_MISS_FRAMES: int = 2
+var _aimed_cleanable: Node3D = null
+var _exclude: Array[RID] = []
+var _sample_offsets := PackedVector2Array()
 
 
 func _ready() -> void:
@@ -45,7 +62,10 @@ func _ready() -> void:
 	_camera = get_viewport().get_camera_3d()
 	_laser_beam = $LaserBeam
 	_laser_impact = $LaserImpact
+	_brush_radius = clampf(_brush_radius, brush_radius_min, brush_radius_max)
 	_setup_particles()
+	_setup_samples()
+	_setup_exclusions()
 
 
 func _setup_particles() -> void:
@@ -54,150 +74,270 @@ func _setup_particles() -> void:
 	add_child(_laser_particles)
 
 
+func _setup_samples() -> void:
+	_sample_offsets.clear()
+	for i: int in range(INNER_SAMPLES):
+		var a: float = TAU * (float(i) + 0.5) / INNER_SAMPLES
+		_sample_offsets.append(Vector2(cos(a), sin(a)) * INNER_RING)
+	for i: int in range(OUTER_SAMPLES):
+		var a: float = TAU * float(i) / OUTER_SAMPLES
+		_sample_offsets.append(Vector2(cos(a), sin(a)) * OUTER_RING)
+
+
+## The beam must never hit the body that carries the gun.
+func _setup_exclusions() -> void:
+	var node: Node = get_parent()
+	while node:
+		if node is CollisionObject3D:
+			_exclude.append((node as CollisionObject3D).get_rid())
+		node = node.get_parent()
+
+
+## Leaving the scene mid-burst (restart, quit) must not leave the crackle
+## loop playing or a ring painted on the surface.
+func _exit_tree() -> void:
+	_stop_contact()
+	if is_instance_valid(_aimed_cleanable) and _aimed_cleanable.has_method("clear_aim"):
+		_aimed_cleanable.clear_aim()
+
+
 func _input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
 			_laser_active = not _laser_active
 
-			if not _laser_active:
-				_laser_beam.hide_beam()
-				_hide_particles()
-				_stop_contact()
-				_last_hit_object = null
-				_miss_frames = 0
-
 		elif event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
-			_brush_radius = minf(_brush_radius + brush_radius_step, brush_radius_max)
-			emit_signal("brush_size_changed", _brush_radius)
+			_set_brush_radius(_brush_radius + brush_radius_step)
 
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
-			_brush_radius = maxf(_brush_radius - brush_radius_step, brush_radius_min)
-			emit_signal("brush_size_changed", _brush_radius)
+			_set_brush_radius(_brush_radius - brush_radius_step)
+
+
+func _set_brush_radius(radius: float) -> void:
+	_brush_radius = clampf(radius, brush_radius_min, brush_radius_max)
+	brush_size_changed.emit(_brush_radius)
 
 
 func _physics_process(delta: float) -> void:
-	_update_target()
+	if not is_instance_valid(_camera):
+		_camera = get_viewport().get_camera_3d()
+		if not _camera:
+			return
 
-	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
-		_spray(delta)
-	elif _laser_active:
-		_spray(delta)
+	var beam: Dictionary = _trace_beam()
+	var firing: bool = _laser_active or Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+
+	_update_target(beam)
+	_update_aim(beam, firing)
+
+	if firing:
+		_fire(beam, delta)
 	else:
-		_laser_beam.hide_beam()
-		_laser_impact.set_firing(false)
-		_hide_particles()
-		_stop_contact()
+		_stop_firing(beam)
+
+# =============================================================================
+# BEAM TRACE
+# =============================================================================
+
+func _cast(space: PhysicsDirectSpaceState3D, from: Vector3, to: Vector3) -> Dictionary:
+	var query := PhysicsRayQueryParameters3D.create(from, to)
+	query.exclude = _exclude
+	return space.intersect_ray(query)
 
 
-func _update_target() -> void:
-	var space_state := get_world_3d().direct_space_state
-	var ray_from := _camera.global_position
-	var ray_to := ray_from + (-_camera.global_basis.z) * spray_range
+## Follows the beam into the scene. Result keys:
+##   origin, dir      beam start and direction
+##   end              where the centre ray stops (for the beam visual)
+##   cleanable        the cleanable the beam touches, or null
+##   point            point on the beam axis where it lands on the cleanable
+##   front, back      depth range of the lit surface around `point`
+##   hit, normal, shape, face   one real surface hit (centre ray if it landed
+##                    on the cleanable, otherwise the nearest sample ray)
+##   samples          every surface hit on the cleanable (dirt feedback)
+func _trace_beam() -> Dictionary:
+	var space := get_world_3d().direct_space_state
+	var origin: Vector3 = _camera.global_position
+	var cam_basis: Basis = _camera.global_basis
+	var dir: Vector3 = -cam_basis.z
+	var reach: Vector3 = dir * spray_range
 
-	var query := PhysicsRayQueryParameters3D.create(ray_from, ray_to)
-	var result := space_state.intersect_ray(query)
+	var beam: Dictionary = {
+		"origin": origin, "dir": dir, "end": origin + reach,
+		"cleanable": null, "samples": [],
+	}
 
-	if result.is_empty():
+	var center: Dictionary = _cast(space, origin, origin + reach)
+	var target: Node3D = null
+	var center_on_target: bool = false
+	if not center.is_empty():
+		beam["end"] = center.position
+		var collider := center.collider as Node3D
+		if collider and collider.has_method("clean_at"):
+			target = collider
+			center_on_target = true
+
+	# Spread rays across the beam
+	var hits: Array[Dictionary] = []
+	for offset: Vector2 in _sample_offsets:
+		var from: Vector3 = origin + (cam_basis.x * offset.x + cam_basis.y * offset.y) * _brush_radius
+		var hit: Dictionary = _cast(space, from, from + reach)
+		if hit.is_empty():
+			continue
+		var collider := hit.collider as Node3D
+		if collider and collider.has_method("clean_at"):
+			hit["depth"] = (hit.position - origin).dot(dir)
+			hits.append(hit)
+
+	if not target:
+		# Near miss: the centre ray passed by, but the beam's edge touches something.
+		var nearest: float = INF
+		for hit: Dictionary in hits:
+			if hit["depth"] < nearest:
+				nearest = hit["depth"]
+				target = hit.collider
+		if not target:
+			return beam
+
+	var depths: Array[float] = []
+	var representative: Dictionary = center if center_on_target else {}
+	for hit: Dictionary in hits:
+		if hit.collider != target:
+			continue
+		depths.append(hit["depth"])
+		beam["samples"].append(hit)
+		if not center_on_target and (representative.is_empty() or hit["depth"] < representative["depth"]):
+			representative = hit
+
+	var depth0: float = (center.position - origin).dot(dir) if center_on_target else float(representative["depth"])
+	depths.sort()
+
+	# Toward the laser: anything the beam touches in front of the hit is lit.
+	var nearest_depth: float = depth0 if depths.is_empty() else minf(depth0, depths[0])
+	# Away from the laser: follow the surface only while it stays continuous,
+	# so a far part glimpsed past an edge does not open the beam to hidden layers.
+	var jump: float = maxf(_brush_radius * SURFACE_JUMP_RADII, SURFACE_JUMP_MIN)
+	var farthest_depth: float = depth0
+	for d: float in depths:
+		if d <= farthest_depth:
+			continue
+		if d - farthest_depth > jump:
+			break
+		farthest_depth = d
+
+	beam["cleanable"] = target
+	beam["point"] = origin + dir * depth0
+	beam["distance"] = depth0
+	beam["front"] = (depth0 - nearest_depth) + maxf(_brush_radius * FRONT_PAD_RADII, FRONT_PAD_MIN)
+	beam["back"] = (farthest_depth - depth0) + maxf(_brush_radius * BACK_PAD_RADII, BACK_PAD_MIN)
+	beam["hit"] = representative.position
+	beam["normal"] = representative.normal
+	beam["shape"] = representative.get("shape", -1)
+	beam["face"] = representative.get("face_index", -1)
+	if center_on_target:
+		beam["samples"].append(center)
+	return beam
+
+# =============================================================================
+# TARGET INFO + AIM RING
+# =============================================================================
+
+func _update_target(beam: Dictionary) -> void:
+	var cleanable: Node3D = beam["cleanable"]
+	if not cleanable:
 		_clear_target()
-		_laser_impact.hide_impact()
-		_is_aiming_at_cleanable = false
-		emit_signal("hit_dirty_surface", false)
+		hit_dirty_surface.emit(false)
 		return
 
-	var hit_object: Node3D = result.collider as Node3D
+	var dirty: bool = _beam_touches_dirt(beam)
+	beam["dirty"] = dirty
 
-	if hit_object.has_method("get_zone_at_position"):
-		var zone_info: Dictionary = hit_object.get_zone_at_position(result.position, result.normal)
+	var zone_info: Dictionary = {}
+	if cleanable.has_method("get_zone_at_position"):
+		zone_info = cleanable.get_zone_at_position(beam["hit"], beam["normal"], beam["shape"], beam["face"])
 
-		# Aiming ring shows on any cleanable surface, sized to the true brush footprint
-		_laser_impact.show_impact(result.position, result.normal, _brush_radius)
-		_is_aiming_at_cleanable = true
-
-		if not zone_info.is_empty():
-			var zone_key: String = zone_info["key"]
-			var zone_name: String = zone_info["name"]
-			var progress: float = zone_info["progress"]
-			var completed: bool = zone_info["completed"]
-
-			_current_cleanable = hit_object
-			_current_zone_key = zone_key
-
-			emit_signal("target_changed", zone_name, progress, completed)
-			emit_signal("hit_dirty_surface", not completed)
-		else:
-			var has_dirt: bool = false
-			if hit_object.has_method("has_dirt_at"):
-				has_dirt = hit_object.has_dirt_at(result.position, result.normal)
-
-			_clear_target()
-			emit_signal("hit_dirty_surface", has_dirt)
-	else:
+	if zone_info.is_empty():
 		_clear_target()
-		_laser_impact.hide_impact()
-		_is_aiming_at_cleanable = false
-		emit_signal("hit_dirty_surface", false)
+	else:
+		_current_zone_key = zone_info["key"]
+		target_changed.emit(zone_info["name"], zone_info["progress"], zone_info["completed"])
+
+	hit_dirty_surface.emit(dirty)
+
+
+## Is there still dirt anywhere under the beam?
+func _beam_touches_dirt(beam: Dictionary) -> bool:
+	var cleanable: Node3D = beam["cleanable"]
+	if not cleanable.has_method("has_dirt_at"):
+		return false
+	if cleanable.has_dirt_at(beam["hit"], beam["normal"], beam["shape"], beam["face"]):
+		return true
+	for hit: Dictionary in beam["samples"]:
+		if cleanable.has_dirt_at(hit.position, hit.normal, hit.get("shape", -1), hit.get("face_index", -1)):
+			return true
+	return false
 
 
 func _clear_target() -> void:
 	if _current_zone_key != "":
 		_current_zone_key = ""
-		_current_cleanable = null
-		emit_signal("target_lost")
+		target_lost.emit()
 
 
-func _spray(delta: float) -> void:
-	var space_state := get_world_3d().direct_space_state
+## The ring is drawn by the cleanable's own shader with the exact beam the
+## brush uses, so it always outlines what will be cleaned.
+func _update_aim(beam: Dictionary, firing: bool) -> void:
+	var cleanable: Node3D = beam["cleanable"]
+	if is_instance_valid(_aimed_cleanable) and _aimed_cleanable != cleanable and _aimed_cleanable.has_method("clear_aim"):
+		_aimed_cleanable.clear_aim()
+	_aimed_cleanable = cleanable
 
-	var ray_from := _camera.global_position
-	var ray_to := ray_from + (-_camera.global_basis.z) * spray_range
+	if cleanable and cleanable.has_method("set_aim"):
+		var in_range: bool = _calculate_effectiveness(beam["distance"]) > 0.0
+		cleanable.set_aim(beam["point"], beam["dir"], _brush_radius, beam["front"], beam["back"], firing and in_range)
 
-	var query := PhysicsRayQueryParameters3D.create(ray_from, ray_to)
-	var result := space_state.intersect_ray(query)
+# =============================================================================
+# FIRING
+# =============================================================================
 
-	var beam_end: Vector3
-	var hit_position: Vector3
-	var hit_normal: Vector3
-	var hit_object: Node3D
+func _fire(beam: Dictionary, delta: float) -> void:
+	var cleanable: Node3D = beam["cleanable"]
+	_laser_beam.show_beam(global_position, beam["end"])
 
-	if not result.is_empty():
-		hit_position = result.position
-		hit_normal = result.normal
-		hit_object = result.collider as Node3D
-		_last_hit_position = hit_position
-		_last_hit_normal = hit_normal
-		_last_hit_object = hit_object
-		_miss_frames = 0
-	elif _miss_frames < MAX_MISS_FRAMES and _last_hit_object:
-		hit_position = _last_hit_position
-		hit_normal = _last_hit_normal
-		hit_object = _last_hit_object
-		_miss_frames += 1
-	else:
-		beam_end = ray_to
-		_hide_particles()
-		_stop_contact()
-		_laser_beam.show_beam(global_position, beam_end)
-		_laser_impact.set_firing(false)
-		_last_hit_object = null
+	if not cleanable:
+		_end_contact()
 		return
 
-	beam_end = hit_position
-	var distance: float = ray_from.distance_to(hit_position)
+	var effectiveness: float = _calculate_effectiveness(beam["distance"])
+	cleanable.clean_at(
+		beam["point"], beam["dir"], laser_intensity, effectiveness, delta,
+		_brush_radius, _get_pressure_multiplier(), beam["front"], beam["back"]
+	)
 
-	if hit_object.has_method("clean_at"):
-		var effectiveness := _calculate_effectiveness(distance)
-		var pressure := _get_pressure_multiplier()
-		var beam_dir := (hit_position - ray_from).normalized()
-		hit_object.clean_at(hit_position, beam_dir, laser_intensity, effectiveness, delta, _brush_radius, pressure)
+	_laser_impact.show_impact(beam["hit"], beam["normal"], _brush_radius)
+	_laser_impact.set_firing(effectiveness > 0.0)
+
+	# Sparks and crackle only while there is dirt left to burn under the beam.
+	if beam.get("dirty", false) and effectiveness > 0.0:
 		_start_contact()
-		_show_particles(beam_end, hit_normal)
-		_laser_impact.set_firing(true)
+		_show_particles(beam["hit"], beam["normal"])
 	else:
 		_stop_contact()
 		_hide_particles()
-		_laser_impact.set_firing(false)
 
-	_laser_beam.show_beam(global_position, beam_end)
+
+func _stop_firing(beam: Dictionary) -> void:
+	_laser_beam.hide_beam()
+	_end_contact()
+	var cleanable: Node3D = beam["cleanable"]
+	if cleanable and cleanable.has_method("end_stroke"):
+		cleanable.end_stroke()
+
+
+func _end_contact() -> void:
+	_laser_impact.set_firing(false)
+	_laser_impact.hide_impact()
+	_hide_particles()
+	_stop_contact()
 
 
 func _start_contact() -> void:
@@ -218,9 +358,8 @@ func _calculate_effectiveness(distance: float) -> float:
 	if distance <= optimal_distance:
 		return 1.0
 
-	var falloff_range: float = max_distance - optimal_distance
-	var distance_past_optimal: float = distance - optimal_distance
-	return 1.0 - (distance_past_optimal / falloff_range)
+	var falloff_range: float = maxf(max_distance - optimal_distance, 0.0001)
+	return clampf(1.0 - (distance - optimal_distance) / falloff_range, 0.0, 1.0)
 
 
 ## Small brush = focused beam (more power per area), large brush = wide and soft.

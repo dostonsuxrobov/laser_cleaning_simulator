@@ -20,6 +20,7 @@ DirtVision="*res://autoloads/dirt_vision.gd"
 AudioManager="*res://autoloads/audio_manager.gd"
 GameManager="*res://autoloads/game_manager.gd"
 ReplayRecorder="*res://autoloads/replay_recorder.gd"
+GameSettings="*res://autoloads/game_settings.gd"
 
 [input]
 
