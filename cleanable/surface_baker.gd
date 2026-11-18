@@ -12,7 +12,9 @@ const FLOATS_PER_FACE: int = 24
 ##   position: PackedFloat32Array, 4 floats/texel (xyz body-local, w = coverage)
 ##   normal:   PackedFloat32Array, 4 floats/texel (xyz body-local, w unused)
 ##   coverage: PackedByteArray, 1 = real surface, 2 = dilated padding
-static func bake(faces: PackedFloat32Array, size: int, dilate_radius: int) -> Dictionary:
+## `cancel` is an optional one-element array; set cancel[0] = true from another
+## thread to abandon the bake early (the result is then incomplete - discard it).
+static func bake(faces: PackedFloat32Array, size: int, dilate_radius: int, cancel: Array = []) -> Dictionary:
 	var texel_count: int = size * size
 	var pos := PackedFloat32Array()
 	pos.resize(texel_count * 4)
@@ -23,6 +25,8 @@ static func bake(faces: PackedFloat32Array, size: int, dilate_radius: int) -> Di
 
 	var face_count: int = faces.size() / FLOATS_PER_FACE
 	for f: int in range(face_count):
+		if not cancel.is_empty() and cancel[0]:
+			break
 		var o: int = f * FLOATS_PER_FACE
 		var ax: float = faces[o + 18] * size
 		var ay: float = faces[o + 19] * size
@@ -67,7 +71,8 @@ static func bake(faces: PackedFloat32Array, size: int, dilate_radius: int) -> Di
 				nrm[idx + 3] = 1.0
 				cov[row + x] = 1
 
-	_dilate(pos, nrm, cov, size, dilate_radius)
+	if cancel.is_empty() or not cancel[0]:
+		_dilate(pos, nrm, cov, size, dilate_radius)
 	return {"position": pos, "normal": nrm, "coverage": cov}
 
 

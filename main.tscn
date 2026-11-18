@@ -44,6 +44,7 @@ script = ExtResource("6_7mycd")
 
 [node name="GameFlow" type="Node" parent="."]
 script = ExtResource("6_272bh")
+job_name = "Robot Arm"
 
 [node name="factory" parent="." instance=ExtResource("6_5vw27")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -13.031669)

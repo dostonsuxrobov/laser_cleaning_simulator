@@ -12,7 +12,12 @@ signal recording_stopped
 
 var is_recording: bool = false
 
-var _frames: Array[PackedByteArray] = []
+# Each frame is {"img": Image} right after capture and becomes {"png": bytes}
+# once a worker thread has compressed it (PNG encoding on the main thread
+# caused a visible hitch every capture).
+var _frames: Array[Dictionary] = []
+var _frames_mutex := Mutex.new()
+var _compress_tasks: Array[int] = []
 var _timer: float = 0.0
 var _base_frame_interval: float = 0.0
 
@@ -59,7 +64,9 @@ func start_recording() -> void:
 		push_warning("No camera markers set!")
 		return
 
-	_frames.clear()
+	_frames_mutex.lock()
+	_frames = []
+	_frames_mutex.unlock()
 	frame_interval = _base_frame_interval
 	is_recording = true
 	_timer = 0.0
@@ -114,11 +121,46 @@ func _capture_frame() -> void:
 
 	var img := _viewport.get_texture().get_image()
 	if img:
-		_frames.append(img.save_png_to_buffer())
+		var frame: Dictionary = {"img": img}
+		_frames_mutex.lock()
+		_frames.append(frame)
+		_frames_mutex.unlock()
+		_collect_finished_tasks()
+		_compress_tasks.append(WorkerThreadPool.add_task(_compress_frame.bind(frame)))
 
 	# Back to idle
 	_viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
 	_is_capturing = false
+
+
+## Every pool task has to be collected once it is done.
+func _collect_finished_tasks() -> void:
+	var still_running: Array[int] = []
+	for task: int in _compress_tasks:
+		if WorkerThreadPool.is_task_completed(task):
+			WorkerThreadPool.wait_for_task_completion(task)
+		else:
+			still_running.append(task)
+	_compress_tasks = still_running
+
+
+## Never let a worker outlive this node (quitting right after a capture).
+func _exit_tree() -> void:
+	for task: int in _compress_tasks:
+		WorkerThreadPool.wait_for_task_completion(task)
+	_compress_tasks.clear()
+
+
+## Worker thread: swap the raw image for its PNG bytes.
+func _compress_frame(frame: Dictionary) -> void:
+	var img: Image = frame.get("img")
+	if not img:
+		return
+	var png: PackedByteArray = img.save_png_to_buffer()
+	_frames_mutex.lock()
+	frame["png"] = png
+	frame.erase("img")
+	_frames_mutex.unlock()
 
 
 func _pick_camera_angle() -> Transform3D:
@@ -148,18 +190,32 @@ func _pick_camera_angle() -> Transform3D:
 
 
 func _thin_frames() -> void:
-	var new_frames: Array[PackedByteArray] = []
+	_frames_mutex.lock()
+	var new_frames: Array[Dictionary] = []
 	for i: int in range(0, _frames.size(), 2):
 		new_frames.append(_frames[i])
 	_frames = new_frames
+	_frames_mutex.unlock()
 	frame_interval *= 2
 
 
 func get_frame(index: int) -> Image:
 	if index < 0 or index >= _frames.size():
 		return null
+
+	_frames_mutex.lock()
+	var frame: Dictionary = _frames[index]
+	var raw: Image = frame.get("img")
+	var png: PackedByteArray = frame.get("png", PackedByteArray())
+	_frames_mutex.unlock()
+
+	if raw:
+		return raw  # not compressed yet
+	if png.is_empty():
+		return null
 	var img := Image.new()
-	img.load_png_from_buffer(_frames[index])
+	if img.load_png_from_buffer(png) != OK:
+		return null
 	return img
 
 
@@ -168,5 +224,7 @@ func get_frame_count() -> int:
 
 
 func clear() -> void:
-	_frames.clear()
+	_frames_mutex.lock()
+	_frames = []
+	_frames_mutex.unlock()
 	is_recording = false

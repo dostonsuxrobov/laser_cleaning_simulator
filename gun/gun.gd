@@ -28,6 +28,8 @@ func _ready() -> void:
 func _find_player() -> void:
 	# Wait one frame for player to register in group
 	await get_tree().process_frame
+	if not is_inside_tree():
+		return  # scene was restarted while waiting
 	var players := get_tree().get_nodes_in_group("player")
 	if players.size() > 0:
 		_player = players[0] as CharacterBody3D

@@ -291,8 +291,6 @@ data = PackedVector3Array(-1.3508999, 0.4888, -0.94579995, -1.3824999, 0.4863, -
 [node name="robot_arm" type="StaticBody3D"]
 script = ExtResource("1_2pmgj")
 zone_map = ExtResource("2_j6w7o")
-rust_complete_threshold = 0.8400000000000001
-metal_complete_threshold = 0.8700000000000001
 min_zone_pixels = 200
 
 [node name="Armature" type="Node3D" parent="."]

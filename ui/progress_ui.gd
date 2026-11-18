@@ -113,31 +113,20 @@ func _draw_rings() -> void:
 
 
 func _draw_arc_ring(center: Vector2, radius: float, start_pct: float, end_pct: float, color: Color, thickness: float) -> void:
+	var span: float = clampf(end_pct - start_pct, 0.0, 1.0)
+	if span <= 0.0:
+		return
+
 	var start_angle: float = -PI / 2.0 + start_pct * TAU
-	var end_angle: float = -PI / 2.0 + end_pct * TAU
-	
-	var point_count: int = int(64 * abs(end_pct - start_pct)) + 8
-	point_count = max(point_count, 4)
-	
-	var points := PackedVector2Array()
-	var colors := PackedColorArray()
-	
-	for i: int in range(point_count + 1):
-		var angle: float = start_angle + (end_angle - start_angle) * float(i) / float(point_count)
-		points.append(center + Vector2(cos(angle), sin(angle)) * (radius + thickness / 2.0))
-		colors.append(color)
-	
-	for i: int in range(point_count, -1, -1):
-		var angle: float = start_angle + (end_angle - start_angle) * float(i) / float(point_count)
-		points.append(center + Vector2(cos(angle), sin(angle)) * (radius - thickness / 2.0))
-		colors.append(color)
-	
-	if points.size() >= 3:
-		_rings.draw_polygon(points, colors)
+	var end_angle: float = start_angle + span * TAU
+	var point_count: int = maxi(int(96.0 * span), 2) + 1
+	_rings.draw_arc(center, radius, start_angle, end_angle, point_count, color, thickness, true)
 
 
 func _find_sprayer() -> void:
 	await get_tree().process_frame
+	if not is_inside_tree():
+		return  # scene was restarted while waiting
 	var sprayers := get_tree().get_nodes_in_group("sprayer")
 	if sprayers.size() > 0:
 		_sprayer = sprayers[0] as Node3D
@@ -147,7 +136,11 @@ func _find_sprayer() -> void:
 
 func _find_cleanable() -> void:
 	await get_tree().process_frame
+	if not is_inside_tree():
+		return
 	await get_tree().process_frame
+	if not is_inside_tree():
+		return
 	var cleanables: Array[Node] = get_tree().get_nodes_in_group("cleanable")
 	if cleanables.size() > 0:
 		_cleanable = cleanables[0] as Node3D
@@ -167,8 +160,10 @@ func _on_target_changed(zone_name: String, progress: float, completed: bool) -> 
 	if _is_job_finished:
 		return
 	_has_zone_target = true
-	_zone_completed = completed or progress >= 0.95
-	_zone_progress = 1.0 if _zone_completed else progress
+	# Only the cleanable decides when a zone is done - never round it up here,
+	# or the ring would show "100%" on a zone that still needs work.
+	_zone_completed = completed
+	_zone_progress = 1.0 if _zone_completed else minf(progress, 0.99)
 	_current_zone_name = zone_name
 
 
@@ -206,7 +201,8 @@ func _process(delta: float) -> void:
 			_center_label.add_theme_color_override("font_color", LABEL_DIM)
 			_center_percent.add_theme_color_override("font_color", LABEL_BRIGHT)
 	else:
-		_center_label.text = "OVERALL"
+		var scanning: bool = _cleanable != null and _cleanable.has_method("is_surface_ready") and not _cleanable.is_surface_ready()
+		_center_label.text = "SCANNING" if scanning else "OVERALL"
 		var overall_pct: int = int(_display_overall * 100.0)
 		if _display_overall >= 0.99:
 			overall_pct = 100

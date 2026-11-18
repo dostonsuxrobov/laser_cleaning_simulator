@@ -46,4 +46,5 @@ func restart_job() -> void:
 	current_state = State.INTRO
 	job_start_time = 0.0
 	ReplayRecorder.clear()
+	AudioManager.stop_contact()
 	get_tree().reload_current_scene()
