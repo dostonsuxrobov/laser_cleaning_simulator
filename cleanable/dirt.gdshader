@@ -7,14 +7,22 @@ uniform sampler2D rust_albedo : source_color, filter_linear;
 uniform sampler2D rust_normal : hint_normal, filter_linear;
 uniform float rust_roughness : hint_range(0.0, 1.0) = 0.9;
 
+// Layer between the rust and the clean finish (what the laser exposes first).
 uniform sampler2D metal_albedo : source_color, filter_linear;
 uniform sampler2D metal_normal : hint_normal, filter_linear;
 uniform float metal_roughness : hint_range(0.0, 1.0) = 0.5;
+uniform vec3 metal_tint : source_color = vec3(1.0);
+// How strongly the old rust leaves dark scorch stains on that layer.
+uniform float metal_stain : hint_range(0.0, 1.0) = 0.0;
 
 uniform sampler2D chrome_albedo : source_color, filter_linear;
 uniform sampler2D chrome_normal : hint_normal, filter_linear;
 uniform float chrome_roughness : hint_range(0.0, 1.0) = 0.1;
 uniform float chrome_metallic : hint_range(0.0, 1.0) = 1.0;
+// Optional occlusion (R) / roughness (G) / metallic (B) map for the clean
+// finish. When enabled it replaces the two sliders above.
+uniform bool chrome_use_orm = false;
+uniform sampler2D chrome_orm : hint_default_white, filter_linear;
 
 uniform sampler2D dirt_mask : hint_default_white, filter_linear, repeat_disable;
 
@@ -57,8 +65,12 @@ void fragment() {
 	float grey_amount = mask.g;
 
 	vec3 rust_col = texture(rust_albedo, UV).rgb;
-	vec3 metal_col = texture(metal_albedo, UV).rgb;
+	vec3 metal_col = texture(metal_albedo, UV).rgb * metal_tint;
 	vec3 chrome_col = texture(chrome_albedo, UV).rgb;
+
+	// Scorch stains: darker wherever the rust layer above was dark
+	float rust_luma = clamp(dot(rust_col, vec3(0.299, 0.587, 0.114)) * 1.25, 0.0, 1.0);
+	metal_col *= mix(1.0, rust_luma, metal_stain);
 
 	vec3 rust_nrm = texture(rust_normal, UV).rgb;
 	vec3 metal_nrm = texture(metal_normal, UV).rgb;
@@ -69,6 +81,13 @@ void fragment() {
 	vec3 normal_map = chrome_nrm;
 	float roughness = chrome_roughness;
 	float metallic = chrome_metallic;
+	float occlusion = 1.0;
+	if (chrome_use_orm) {
+		vec3 orm = texture(chrome_orm, UV).rgb;
+		occlusion = orm.r;
+		roughness = orm.g;
+		metallic = orm.b;
+	}
 
 	float metal_visible = grey_amount * (1.0 - rust_amount);
 
@@ -138,6 +157,7 @@ void fragment() {
 	NORMAL_MAP = normal_map;
 	ROUGHNESS = roughness;
 	METALLIC = metallic;
+	AO = occlusion;
 	EMISSION = emission;
 	ALPHA = alpha;
 	ALPHA_SCISSOR_THRESHOLD = 0.5;
