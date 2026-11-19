@@ -1,7 +1,12 @@
 shader_type spatial;
 render_mode cull_disabled;
 
+// Normal look of a cleanable surface: rust on top, a base layer under it,
+// the clean finish at the bottom, blended by the dirt mask.
+// (Dirt vision uses dirt_xray.gdshader instead.)
+
 #include "res://cleanable/zone_lookup.gdshaderinc"
+#include "res://cleanable/aim_ring.gdshaderinc"
 
 uniform sampler2D rust_albedo : source_color, filter_linear;
 uniform sampler2D rust_normal : hint_normal, filter_linear;
@@ -28,26 +33,6 @@ uniform sampler2D dirt_mask : hint_default_white, filter_linear, repeat_disable;
 
 // Per-zone completion flash (index = zone id - 1), driven by cleanable_mesh.gd
 uniform float zone_flash[16];
-
-uniform bool dirt_vision_enabled = false;
-uniform vec3 rust_glow_color : source_color = vec3(1.0, 0.3, 0.1);
-uniform vec3 metal_glow_color : source_color = vec3(0.3, 0.5, 1.0);
-uniform float dirt_glow_intensity : hint_range(0.0, 10.0) = 5.0;
-uniform float pulse_speed : hint_range(0.5, 5.0) = 2.0;
-uniform float pulse_min : hint_range(0.0, 1.0) = 0.4;
-uniform float outside_zone_alpha : hint_range(0.0, 0.2) = 0.05;
-
-// Laser aim, in world space. The ring is drawn with the very same beam test
-// the brush shader uses, so it outlines exactly what the laser will clean.
-uniform float aim_visible = 0.0;  // 0 = no ring
-uniform float aim_firing = 0.0;   // 0..1, adds the hot glow under the beam
-uniform vec3 aim_point = vec3(0.0);
-uniform vec3 aim_dir = vec3(0.0, 0.0, -1.0);
-uniform float aim_radius = 0.075;
-uniform float aim_depth_front = 0.2;
-uniform float aim_depth_back = 0.2;
-uniform vec3 aim_ring_color : source_color = vec3(1.0, 1.0, 1.0);
-uniform vec3 aim_heat_color : source_color = vec3(1.0, 0.55, 0.2);
 
 varying vec3 world_pos;
 varying vec3 world_nrm;
@@ -76,7 +61,7 @@ void fragment() {
 	vec3 metal_nrm = texture(metal_normal, UV).rgb;
 	vec3 chrome_nrm = texture(chrome_normal, UV).rgb;
 
-	// Normal surface compositing
+	// Layer compositing
 	vec3 albedo = chrome_col;
 	vec3 normal_map = chrome_nrm;
 	float roughness = chrome_roughness;
@@ -104,51 +89,13 @@ void fragment() {
 	float flash = (zone > 0) ? zone_flash[zone - 1] : 0.0;
 	vec3 emission = vec3(1.0) * flash * 3.0;
 
-	float alpha = 1.0;
-
-	if (dirt_vision_enabled) {
-		float dirt_amount = max(rust_amount, grey_amount);
-
-		if (dirt_amount > 0.01) {
-			// Remaining dirt: glow and stay fully opaque
-			float pulse = pulse_min + (1.0 - pulse_min) * (0.5 + 0.5 * sin(TIME * pulse_speed));
-			vec3 glow_color = mix(metal_glow_color, rust_glow_color, step(0.01, rust_amount));
-			float boosted_dirt = pow(dirt_amount, 0.5);
-
-			emission += glow_color * boosted_dirt * dirt_glow_intensity * pulse;
-			albedo = glow_color * 0.5;
-			alpha = 1.0;
-		} else {
-			// Clean areas: drop below scissor threshold = invisible
-			albedo = vec3(0.0);
-			emission = vec3(0.0);
-			alpha = outside_zone_alpha;
-		}
-	}
-
-	// Aiming ring + heat glow: same cylinder-around-the-beam test as the brush
-	if (aim_visible > 0.0) {
-		vec3 rel = world_pos - aim_point;
-		float depth = dot(rel, aim_dir);
-		float dist = length(rel - aim_dir * depth);
-		vec3 wn = FRONT_FACING ? world_nrm : -world_nrm;
-		bool lit = depth >= -aim_depth_front && depth <= aim_depth_back && dot(wn, -aim_dir) > 0.02;
-		if (lit && dist < aim_radius * 1.2) {
-			float px = max(fwidth(dist), 1e-5);
-			// crisp line just inside the radius, with a dark rim so it reads on any surface
-			float line_w = max(px * 1.25, aim_radius * 0.02);
-			float d_line = abs(dist - (aim_radius - line_w));
-			float ring = 1.0 - smoothstep(line_w - px, line_w, d_line);
-			float rim = 1.0 - smoothstep(line_w * 2.0 - px, line_w * 2.0 + px, d_line);
-			float inside = 1.0 - smoothstep(aim_radius * 0.55, aim_radius, dist);
-
-			albedo = mix(albedo, vec3(0.0), max(rim - ring, 0.0) * 0.6 * aim_visible);
-			albedo = mix(albedo, aim_ring_color, ring * aim_visible);
-			emission += aim_ring_color * ring * aim_visible * 0.9;
-			emission += aim_heat_color * inside * aim_firing * 0.9;
-			alpha = max(alpha, ring * aim_visible);
-		}
-	}
+	// Aiming ring + heat glow
+	float aim_dist = aim_distance(world_pos, world_nrm);
+	vec3 aim = aim_ring(aim_dist, fwidth(aim_dist));
+	albedo = mix(albedo, vec3(0.0), aim.y * 0.6);
+	albedo = mix(albedo, aim_ring_color, aim.x);
+	emission += aim_ring_color * aim.x * 0.9;
+	emission += aim_heat_color * aim.z * 0.9;
 
 	// Flip normal for back faces so lighting is correct from behind
 	NORMAL = FRONT_FACING ? NORMAL : -NORMAL;
@@ -159,6 +106,4 @@ void fragment() {
 	METALLIC = metallic;
 	AO = occlusion;
 	EMISSION = emission;
-	ALPHA = alpha;
-	ALPHA_SCISSOR_THRESHOLD = 0.5;
 }

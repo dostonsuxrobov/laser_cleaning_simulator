@@ -71,13 +71,6 @@ shader_parameter/metal_roughness = 0.5
 shader_parameter/chrome_albedo = ExtResource("2_khxcx")
 shader_parameter/chrome_roughness = 0.10000000475
 shader_parameter/chrome_metallic = 0.10000000475
-shader_parameter/dirt_vision_enabled = false
-shader_parameter/rust_glow_color = Color(1, 0.3, 0.1, 1)
-shader_parameter/metal_glow_color = Color(0.3, 0.5, 1, 1)
-shader_parameter/dirt_glow_intensity = 5.0
-shader_parameter/pulse_speed = 2.0
-shader_parameter/pulse_min = 0.4
-shader_parameter/outside_zone_alpha = 0.05
 
 [sub_resource type="ArrayMesh" id="ArrayMesh_4g3uh"]
 _surfaces = [{
@@ -129,13 +122,6 @@ shader_parameter/metal_roughness = 0.5
 shader_parameter/chrome_albedo = ExtResource("2_khxcx")
 shader_parameter/chrome_roughness = 0.1
 shader_parameter/chrome_metallic = 0.10000000475
-shader_parameter/dirt_vision_enabled = false
-shader_parameter/rust_glow_color = Color(1, 0.3, 0.1, 1)
-shader_parameter/metal_glow_color = Color(0.3, 0.5, 1, 1)
-shader_parameter/dirt_glow_intensity = 5.0
-shader_parameter/pulse_speed = 2.0
-shader_parameter/pulse_min = 0.4
-shader_parameter/outside_zone_alpha = 0.05
 
 [sub_resource type="ArrayMesh" id="ArrayMesh_ds2bh"]
 _surfaces = [{
@@ -187,13 +173,6 @@ shader_parameter/metal_roughness = 0.5
 shader_parameter/chrome_albedo = ExtResource("2_khxcx")
 shader_parameter/chrome_roughness = 0.1
 shader_parameter/chrome_metallic = 0.10000000475
-shader_parameter/dirt_vision_enabled = false
-shader_parameter/rust_glow_color = Color(1, 0.3, 0.1, 1)
-shader_parameter/metal_glow_color = Color(0.3, 0.5, 1, 1)
-shader_parameter/dirt_glow_intensity = 5.0
-shader_parameter/pulse_speed = 2.0
-shader_parameter/pulse_min = 0.4
-shader_parameter/outside_zone_alpha = 0.05
 
 [sub_resource type="ArrayMesh" id="ArrayMesh_cjmym"]
 _surfaces = [{
@@ -245,13 +224,6 @@ shader_parameter/metal_roughness = 0.5
 shader_parameter/chrome_albedo = ExtResource("2_khxcx")
 shader_parameter/chrome_roughness = 0.1
 shader_parameter/chrome_metallic = 0.10000000475
-shader_parameter/dirt_vision_enabled = false
-shader_parameter/rust_glow_color = Color(1, 0.3, 0.1, 1)
-shader_parameter/metal_glow_color = Color(0.3, 0.5, 1, 1)
-shader_parameter/dirt_glow_intensity = 5.0
-shader_parameter/pulse_speed = 2.0
-shader_parameter/pulse_min = 0.4
-shader_parameter/outside_zone_alpha = 0.05
 
 [sub_resource type="Animation" id="Animation_in0uo"]
 resource_name = "ArmatureAction"

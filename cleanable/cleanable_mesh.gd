@@ -59,6 +59,18 @@ signal surface_ready
 @export_range(0.3, 0.9, 0.05) var brightness_threshold: float = 0.5
 @export_range(0.05, 0.5, 0.05) var seed_merge_distance: float = 0.15
 
+@export_group("Dirt Vision")
+## Highlight for dirt that still has rust on it / only the base layer left.
+@export var vision_rust_color: Color = Color(1.0, 0.5, 0.12)
+@export var vision_base_color: Color = Color(0.35, 0.65, 1.0)
+@export_range(0.0, 1.0, 0.01) var vision_dirt_opacity: float = 0.9
+## The see-through shell the object turns into.
+@export var vision_ghost_color: Color = Color(0.75, 0.86, 1.0)
+@export_range(0.0, 1.0, 0.01) var vision_ghost_opacity: float = 0.1
+## How fast and how much the highlight breathes.
+@export_range(0.0, 10.0, 0.1) var vision_pulse_speed: float = 2.5
+@export_range(0.0, 0.5, 0.01) var vision_pulse_amount: float = 0.18
+
 @export_group("Victory Animation")
 @export var victory_animation_name: String = "victory_dance"
 
@@ -72,7 +84,12 @@ const STROKE_GAP_MS: int = 200
 const MAX_SWEEP_RADII: float = 10.0
 const DEFAULT_DEPTH_RADII: float = 3.0
 const FACE_TIE_EPS: float = 0.003
+# A face counts as badly unwrapped when its texture density is this many times
+# the model's median AND it is this much more stretched one way than the other.
+const STRETCH_LIMIT: float = 6.0
+const STRETCH_ANISOTROPY: float = 6.0
 const DIRT_EPSILON: float = 0.04
+const XRAY_SHADER: Shader = preload("res://cleanable/dirt_xray.gdshader")
 
 enum Measure { IDLE, WAIT_PAINT, WAIT_READBACK }
 
@@ -83,6 +100,12 @@ var _victory_triggered: bool = false
 
 var _materials: Array[ShaderMaterial] = []
 var _mesh_instances: Array[MeshInstance3D] = []
+
+# Dirt vision: per mesh instance, the material to swap in and a shadow-only
+# stand-in (the see-through material casts no shadow of its own).
+var _vision_slots: Array[Dictionary] = []
+var _aim_materials: Array[ShaderMaterial] = []  # normal + dirt-vision materials
+var _vision_on: bool = false
 
 # Zones
 var _zones: Dictionary = {}            # hex key -> zone data
@@ -249,7 +272,7 @@ func set_aim(world_pos: Vector3, beam_dir: Vector3, brush_radius: float, depth_f
 	if _victory_triggered:
 		return  # nothing left to aim at
 	_aim_shown = true
-	for mat: ShaderMaterial in _materials:
+	for mat: ShaderMaterial in _aim_materials:
 		mat.set_shader_parameter("aim_visible", 1.0)
 		mat.set_shader_parameter("aim_firing", 1.0 if firing else 0.0)
 		mat.set_shader_parameter("aim_point", world_pos)
@@ -263,7 +286,7 @@ func clear_aim() -> void:
 	if not _aim_shown:
 		return
 	_aim_shown = false
-	for mat: ShaderMaterial in _materials:
+	for mat: ShaderMaterial in _aim_materials:
 		mat.set_shader_parameter("aim_visible", 0.0)
 		mat.set_shader_parameter("aim_firing", 0.0)
 
@@ -538,6 +561,240 @@ func _setup_mesh_data() -> void:
 		var b: int = face_idx * 3
 		_add_face_to_grid_cells(face_idx, _face_verts[b], _face_verts[b + 1], _face_verts[b + 2])
 
+	_repair_stretched_faces()
+
+
+## Some models contain a few badly unwrapped faces: a small patch of surface
+## whose UVs form a long sliver running across the texture space of other
+## parts. Left alone they do two kinds of damage:
+##  - in the bake, the sliver claims the texels it crosses, so a line on some
+##    other part can never be cleaned from where the player sees it;
+##  - on screen, the patch shows a slice of the texture and dirt of other parts.
+## Such faces are dropped from the bake and given the UVs of the healthy
+## surface right next to them.
+func _repair_stretched_faces() -> void:
+	var stretched: PackedInt32Array = _find_stretched_faces()
+	if stretched.is_empty():
+		return
+
+	var is_stretched: Dictionary = {}
+	for face: int in stretched:
+		is_stretched[face] = true
+
+	# 1. Keep them out of the surface bake
+	var kept := PackedFloat32Array()
+	@warning_ignore("integer_division")
+	var face_count: int = _bake_faces.size() / SurfaceBaker.FLOATS_PER_FACE
+	var run_start: int = 0
+	for face: int in range(face_count + 1):
+		if face == face_count or is_stretched.has(face):
+			if face > run_start:
+				kept.append_array(_bake_faces.slice(run_start * SurfaceBaker.FLOATS_PER_FACE, face * SurfaceBaker.FLOATS_PER_FACE))
+			run_start = face + 1
+	_bake_faces = kept
+
+	# 2. Borrow UVs from the neighbouring healthy surface
+	var per_mesh: Dictionary = {}  # mesh index -> Array of [local face, uv0, uv1, uv2]
+	for face: int in stretched:
+		var b: int = face * 3
+		var centroid: Vector3 = (_face_verts[b] + _face_verts[b + 1] + _face_verts[b + 2]) / 3.0
+		var reference: Vector2 = _nearest_healthy_uv(centroid, Vector2(-1, -1), is_stretched)
+		if reference.x < 0.0:
+			continue
+		var uv0: Vector2 = _nearest_healthy_uv(_face_verts[b], reference, is_stretched)
+		var uv1: Vector2 = _nearest_healthy_uv(_face_verts[b + 1], reference, is_stretched)
+		var uv2: Vector2 = _nearest_healthy_uv(_face_verts[b + 2], reference, is_stretched)
+		if uv0.x < 0.0 or uv1.x < 0.0 or uv2.x < 0.0:
+			continue
+		_face_uvs[b] = uv0
+		_face_uvs[b + 1] = uv1
+		_face_uvs[b + 2] = uv2
+
+		for mesh_index: int in range(_mesh_face_ranges.size()):
+			var face_range: Vector2i = _mesh_face_ranges[mesh_index]
+			if face >= face_range.x and face < face_range.x + face_range.y:
+				if not per_mesh.has(mesh_index):
+					per_mesh[mesh_index] = []
+				per_mesh[mesh_index].append([face - face_range.x, uv0, uv1, uv2])
+				break
+
+	for mesh_index: int in per_mesh:
+		_apply_repaired_uvs(_mesh_instances[mesh_index], per_mesh[mesh_index])
+
+
+## Faces whose UV mapping is far denser than the rest of the model in one
+## direction only. Evenly dense islands (small detailed parts) are left alone.
+func _find_stretched_faces() -> PackedInt32Array:
+	@warning_ignore("integer_division")
+	var face_count: int = _face_verts.size() / 3
+	var major := PackedFloat32Array()
+	var minor := PackedFloat32Array()
+	major.resize(face_count)
+	minor.resize(face_count)
+	var densities: Array[float] = []
+	var collapsed := PackedInt32Array()
+
+	for face: int in range(face_count):
+		var b: int = face * 3
+		var e1: Vector3 = _face_verts[b + 1] - _face_verts[b]
+		var e2: Vector3 = _face_verts[b + 2] - _face_verts[b]
+		var u1: Vector2 = _face_uvs[b + 1] - _face_uvs[b]
+		var u2: Vector2 = _face_uvs[b + 2] - _face_uvs[b]
+		var normal: Vector3 = e1.cross(e2)
+		major[face] = -1.0
+		if normal.length_squared() < 1e-20 or e1.length_squared() < 1e-14:
+			# No surface area at all, yet it may still own a patch of texture:
+			# that patch would be baked onto a line nobody can see or hit.
+			if absf(u1.cross(u2)) * 0.5 * paint_size * paint_size > 2.0:
+				collapsed.append(face)
+			continue
+
+		# Singular values of the surface -> UV map: UV units per metre along
+		# the most and least stretched directions of this face.
+		var x_axis: Vector3 = e1.normalized()
+		var y_axis: Vector3 = normal.normalized().cross(x_axis)
+		var a11: float = e1.length()
+		var a12: float = e2.dot(x_axis)
+		var a22: float = e2.dot(y_axis)
+		if absf(a22) < 1e-9:
+			if absf(u1.cross(u2)) * 0.5 * paint_size * paint_size > 2.0:
+				collapsed.append(face)
+			continue
+		var j11: float = u1.x / a11
+		var j21: float = u1.y / a11
+		var j12: float = (u2.x - j11 * a12) / a22
+		var j22: float = (u2.y - j21 * a12) / a22
+		var q: float = j11 * j11 + j12 * j12 + j21 * j21 + j22 * j22
+		var det: float = j11 * j22 - j12 * j21
+		var disc: float = sqrt(maxf(q * q - 4.0 * det * det, 0.0))
+		major[face] = sqrt((q + disc) * 0.5)
+		minor[face] = sqrt(maxf((q - disc) * 0.5, 0.0))
+		if minor[face] > 0.0:
+			densities.append(sqrt(major[face] * minor[face]))
+
+	var result: PackedInt32Array = collapsed
+	if densities.size() < 8:
+		return result
+	densities.sort()
+	@warning_ignore("integer_division")
+	var median: float = densities[densities.size() / 2]
+	if median <= 0.0:
+		return result
+
+	for face: int in range(face_count):
+		if major[face] > median * STRETCH_LIMIT and major[face] > maxf(minor[face], 1e-12) * STRETCH_ANISOTROPY:
+			result.append(face)
+	result.sort()
+	return result
+
+
+## UV of the healthy surface closest to a body-local point. When several
+## surfaces are equally close (a UV seam), the one nearest to `prefer` wins,
+## so all three corners of a repaired face land on the same island.
+func _nearest_healthy_uv(local_pos: Vector3, prefer: Vector2, skip: Dictionary) -> Vector2:
+	var cell := Vector3i((local_pos / _grid_cell_size).floor())
+	var candidates: Array = []  # [distance, uv]
+	var best_dist: float = INF
+	var seen: Dictionary = {}
+
+	for dx: int in range(-1, 2):
+		for dy: int in range(-1, 2):
+			for dz: int in range(-1, 2):
+				var key := cell + Vector3i(dx, dy, dz)
+				if not _face_grid.has(key):
+					continue
+				for face: int in _face_grid[key]:
+					if seen.has(face) or skip.has(face):
+						continue
+					seen[face] = true
+					var b: int = face * 3
+					var v0: Vector3 = _face_verts[b]
+					var v1: Vector3 = _face_verts[b + 1]
+					var v2: Vector3 = _face_verts[b + 2]
+					if (v2 - v0).cross(v1 - v0).length_squared() < 1e-14:
+						continue
+					var on_face: Vector3 = _closest_point_on_triangle(local_pos, v0, v1, v2)
+					var dist: float = local_pos.distance_to(on_face)
+					var bary: Vector3 = _barycentric(on_face, v0, v1, v2)
+					candidates.append([dist, _face_uvs[b] * bary.x + _face_uvs[b + 1] * bary.y + _face_uvs[b + 2] * bary.z])
+					best_dist = minf(best_dist, dist)
+
+	var slack: float = maxf(_grid_cell_size * 0.01, 0.001)
+	var best_uv := Vector2(-1, -1)
+	var best_score: float = INF
+	for candidate: Array in candidates:
+		if candidate[0] > best_dist + slack:
+			continue
+		var score: float = candidate[0] if prefer.x < 0.0 else (candidate[1] as Vector2).distance_to(prefer)
+		if score < best_score:
+			best_score = score
+			best_uv = candidate[1]
+	return best_uv
+
+
+## Gives this mesh instance its own copy of the mesh with new UVs on the
+## listed faces ([face index, uv0, uv1, uv2]). The faces get private vertices,
+## so healthy neighbours sharing a vertex keep their mapping.
+func _apply_repaired_uvs(mesh_instance: MeshInstance3D, repairs: Array) -> void:
+	var source := mesh_instance.mesh as ArrayMesh
+	if not source or source.get_blend_shape_count() > 0:
+		return
+	var target_surface: int = mini(surface_index, source.get_surface_count() - 1)
+
+	var repaired := ArrayMesh.new()
+	for surface: int in range(source.get_surface_count()):
+		var arrays: Array = source.surface_get_arrays(surface)
+		if surface == target_surface:
+			_rewrite_face_uvs(arrays, repairs)
+		repaired.add_surface_from_arrays(source.surface_get_primitive_type(surface), arrays)
+		repaired.surface_set_material(surface, source.surface_get_material(surface))
+		repaired.surface_set_name(surface, source.surface_get_name(surface))
+	repaired.shadow_mesh = source.shadow_mesh
+	mesh_instance.mesh = repaired
+
+
+func _rewrite_face_uvs(arrays: Array, repairs: Array) -> void:
+	var vertex_count: int = (arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array).size()
+	var uvs: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV]
+	var indexed: bool = arrays[Mesh.ARRAY_INDEX] != null and not (arrays[Mesh.ARRAY_INDEX] as PackedInt32Array).is_empty()
+
+	if not indexed:
+		for repair: Array in repairs:
+			for k: int in range(3):
+				uvs[int(repair[0]) * 3 + k] = repair[1 + k]
+		arrays[Mesh.ARRAY_TEX_UV] = uvs
+		return
+
+	# Indexed mesh: duplicate the three corners of every repaired face
+	var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+	var sources := PackedInt32Array()
+	var new_uvs := PackedVector2Array()
+	for repair: Array in repairs:
+		for k: int in range(3):
+			var slot: int = int(repair[0]) * 3 + k
+			sources.append(indices[slot])
+			new_uvs.append(repair[1 + k])
+			indices[slot] = vertex_count + sources.size() - 1
+	arrays[Mesh.ARRAY_INDEX] = indices
+
+	for channel: int in range(arrays.size()):
+		if channel == Mesh.ARRAY_INDEX or arrays[channel] == null:
+			continue
+		var data: Variant = arrays[channel]
+		@warning_ignore("integer_division")
+		var stride: int = data.size() / vertex_count
+		if stride <= 0:
+			continue
+		for src: int in sources:
+			for part: int in range(stride):
+				data.append(data[src * stride + part])
+		arrays[channel] = data
+
+	uvs = arrays[Mesh.ARRAY_TEX_UV]
+	for i: int in range(new_uvs.size()):
+		uvs[vertex_count + i] = new_uvs[i]
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
+
 
 func _add_face_to_grid_cells(face_idx: int, v0: Vector3, v1: Vector3, v2: Vector3) -> void:
 	var min_cell := Vector3i((v0.min(v1).min(v2) / _grid_cell_size).floor())
@@ -554,9 +811,13 @@ func _add_face_to_grid_cells(face_idx: int, v0: Vector3, v1: Vector3, v2: Vector
 				_face_grid[key].append(face_idx)
 
 
-## Hooks the dirt mask, zone map and zone colors into every unique material.
+## Hooks the dirt mask, zone map and zone colors into every unique material,
+## and prepares the see-through material each mesh switches to in dirt vision.
 func _setup_materials() -> void:
 	_materials.clear()
+	_aim_materials.clear()
+	_vision_slots.clear()
+	var vision_materials: Dictionary = {}  # normal material -> dirt-vision material
 	_zone_flash.resize(MAX_ZONES)
 	_zone_flash.fill(0.0)
 	var viewport_tex: ViewportTexture = _paint_viewport.get_viewport_texture()
@@ -577,6 +838,39 @@ func _setup_materials() -> void:
 			mat.set_shader_parameter("aim_visible", 0.0)
 			mat.set_shader_parameter("aim_firing", 0.0)
 			_materials.append(mat)
+			_aim_materials.append(mat)
+
+			var vision := ShaderMaterial.new()
+			vision.shader = XRAY_SHADER
+			vision.set_shader_parameter("dirt_mask", viewport_tex)
+			vision.set_shader_parameter("rust_color", vision_rust_color)
+			vision.set_shader_parameter("base_color", vision_base_color)
+			vision.set_shader_parameter("dirt_opacity", vision_dirt_opacity)
+			vision.set_shader_parameter("ghost_color", vision_ghost_color)
+			vision.set_shader_parameter("ghost_opacity", vision_ghost_opacity)
+			vision.set_shader_parameter("pulse_speed", vision_pulse_speed)
+			vision.set_shader_parameter("pulse_amount", vision_pulse_amount)
+			vision_materials[mat] = vision
+			_aim_materials.append(vision)
+
+		if mat:
+			# Stand-in that only casts the shadow, shown while dirt vision is on
+			var shadow := MeshInstance3D.new()
+			shadow.name = "DirtVisionShadow"
+			shadow.mesh = mesh_instance.mesh
+			shadow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_SHADOWS_ONLY
+			var shadow_material := StandardMaterial3D.new()
+			shadow_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+			shadow.material_override = shadow_material
+			shadow.visible = false
+			mesh_instance.add_child(shadow)
+
+			_vision_slots.append({
+				"instance": mesh_instance,
+				"override": mesh_instance.get_surface_override_material(surface_index),
+				"vision": vision_materials[mat],
+				"shadow": shadow,
+			})
 
 # =============================================================================
 # SURFACE BAKE — threaded position/normal map rasterization
@@ -1264,6 +1558,18 @@ func _hex_to_color(hex: String) -> Color:
 	)
 
 
+## Dirt vision on: every mesh swaps to its see-through material, where the
+## remaining dirt glows (also through the model). Off: back to normal.
 func _on_dirt_vision_changed(enabled: bool) -> void:
-	for mat: ShaderMaterial in _materials:
-		mat.set_shader_parameter("dirt_vision_enabled", enabled)
+	_vision_on = enabled
+	for slot: Dictionary in _vision_slots:
+		var mesh_instance: MeshInstance3D = slot["instance"]
+		if not is_instance_valid(mesh_instance):
+			continue
+		mesh_instance.set_surface_override_material(surface_index, slot["vision"] if enabled else slot["override"])
+		(slot["shadow"] as MeshInstance3D).visible = enabled
+
+
+## True while this object is shown in dirt vision.
+func is_dirt_vision_on() -> bool:
+	return _vision_on
